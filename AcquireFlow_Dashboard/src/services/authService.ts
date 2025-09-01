@@ -33,7 +33,7 @@ export const authService = {
     expiresIn: number;
     user: AuthUser;
   }> {
-    const res = await fetch(`${API_BASE}/auth/login`, {
+    const res = await fetch(`${API_BASE}/api/v1/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password })
@@ -67,7 +67,7 @@ export const authService = {
 
   async logout(accessToken?: string): Promise<void> {
     try {
-      await fetch(`${API_BASE}/auth/logout`, {
+      await fetch(`${API_BASE}/api/v1/auth/logout`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -97,7 +97,7 @@ export const authService = {
     expiresIn: number;
     user: AuthUser;
   }> {
-    const res = await fetch(`${API_BASE}/auth/register`, {
+    const res = await fetch(`${API_BASE}/api/v1/auth/register`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(params)
@@ -122,7 +122,7 @@ export const authService = {
     expiresIn: number;
     user: AuthUser;
   }> {
-    const res = await fetch(`${API_BASE}/v1/auth/login/firebase`, {
+    const res = await fetch(`${API_BASE}/api/v1/auth/login/firebase`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ idToken })
@@ -142,7 +142,7 @@ export const authService = {
   },
 
   async resetPassword(resetToken: string, newPassword: string): Promise<void> {
-    const res = await fetch(`${API_BASE}/auth/reset-password`, {
+    const res = await fetch(`${API_BASE}/api/v1/auth/reset-password`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ resetToken, newPassword })
