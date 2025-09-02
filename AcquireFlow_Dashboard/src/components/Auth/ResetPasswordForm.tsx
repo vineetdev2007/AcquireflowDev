@@ -90,7 +90,7 @@ export const ResetPasswordForm: React.FC = () => {
     setIsLoading(true);
 
     try {
-      const response = await fetch(`${API_BASE}/api/v1/auth/reset-password`, {
+      const response = await fetch(`${API_BASE}/auth/reset-password`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ resetToken, newPassword })
