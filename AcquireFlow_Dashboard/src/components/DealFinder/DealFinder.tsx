@@ -7,7 +7,7 @@ import { PropertyMap } from './PropertyMap';
 import { BulkSelectionToolbar } from './PropertyResults/BulkSelectionToolbar';
 import { BulkOfferModal } from './BulkOfferModal';
 import { DealFinderHeader } from './DealFinderHeader';
-import { Home, Building, MapPin, DollarSign, TrendingUp, Star, Heart, Map, Grid, List, Clock, CheckSquare, FileText, Mail } from 'lucide-react';
+import { Home, MapPin, Star, Heart, Map as MapIcon, Grid, Clock, CheckSquare, FileText } from 'lucide-react';
 import { propertyService, PropertyData, PropertySearchFilters, testAPI } from '../../services/propertyService';
 
 // Extended interface for UI display
@@ -41,12 +41,53 @@ export const DealFinder: React.FC = () => {
     fetchInitialProperties();
   }, []);
 
+  // Simple in-memory cache for geocoding results
+  const geocodeCache = new Map<string, { lat: number; lng: number }>();
+
+  // Geocode an address to coordinates using OpenStreetMap Nominatim as a lightweight fallback
+  const geocodeAddress = async (fullAddress: string): Promise<{ lat: number; lng: number } | null> => {
+    if (!fullAddress) return null;
+    if (geocodeCache.has(fullAddress)) {
+      return geocodeCache.get(fullAddress)!;
+    }
+    try {
+      const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(fullAddress)}`;
+      const response = await fetch(url, { headers: { 'Accept': 'application/json' } });
+      if (!response.ok) return null;
+      const data: Array<{ lat: string; lon: string } & Record<string, any>> = await response.json();
+      if (Array.isArray(data) && data.length > 0) {
+        const coords = { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) };
+        if (Number.isFinite(coords.lat) && Number.isFinite(coords.lng)) {
+          geocodeCache.set(fullAddress, coords);
+          return coords;
+        }
+      }
+    } catch (_) {
+      // Ignore geocoding errors; map will simply skip invalid points
+    }
+    return null;
+  };
+
+  // Ensure every property has valid coordinates; if missing, try to geocode from address
+  const ensureCoordinates = async (items: PropertyResult[]): Promise<PropertyResult[]> => {
+    const resultsWithCoords = await Promise.all(items.map(async (p) => {
+      const hasValidLatLng = Number.isFinite(p.latitude) && Number.isFinite(p.longitude) && Math.abs(p.latitude) <= 90 && Math.abs(p.longitude) <= 180 && !(p.latitude === 0 && p.longitude === 0);
+      if (hasValidLatLng) return p;
+      const fullAddress = p.address?.address || [p.address?.street, p.address?.city, p.address?.state, p.address?.zip].filter(Boolean).join(', ');
+      const geocoded = await geocodeAddress(fullAddress);
+      if (geocoded) {
+        return { ...p, latitude: geocoded.lat, longitude: geocoded.lng };
+      }
+      return p;
+    }));
+    return resultsWithCoords;
+  };
+
   // Function to transform API data to UI format
   const transformPropertyData = (apiData: PropertyData): PropertyResult => {
     // Calculate derived values
     const estimatedValue = apiData.estimatedValue || apiData.assessedValue || 0;
     const lastSaleAmount = parseFloat(apiData.lastSaleAmount) || 0;
-    const equity = apiData.estimatedEquity || 0;
     
     // Calculate cash flow (simplified calculation)
     const monthlyRent = apiData.rentAmount || estimatedValue * 0.01; // 1% rule
@@ -117,7 +158,8 @@ export const DealFinder: React.FC = () => {
       
       if (response.data && response.data.length > 0) {
         const transformedResults = response.data.map(transformPropertyData);
-        setResults(transformedResults);
+        const withCoords = await ensureCoordinates(transformedResults);
+        setResults(withCoords);
       } else {
         // Fallback to mock data if API returns empty
         generateMockData();
@@ -322,7 +364,8 @@ export const DealFinder: React.FC = () => {
       
       if (response.data && response.data.length > 0) {
         const transformedResults = response.data.map(transformPropertyData);
-        setResults(transformedResults);
+        const withCoords = await ensureCoordinates(transformedResults);
+        setResults(withCoords);
       } else {
         setError('No properties found matching your criteria.');
         setResults([]);
@@ -364,21 +407,75 @@ export const DealFinder: React.FC = () => {
   };
 
   // Convert PropertyResult to Property for map compatibility
-  const convertToMapProperty = (property: PropertyResult) => ({
-    id: parseInt(property.id) || 0,
-    address: property.address.address,
-    city: property.address.city,
-    state: property.address.state,
-    price: property.estimatedValue,
-    type: property.propertyType,
-    beds: property.bedrooms || 0,
-    baths: property.bathrooms || 0,
-    sqft: property.squareFeet,
-    image: property.image,
-    lat: property.latitude,
-    lng: property.longitude,
-    dealScore: property.dealScore
-  });
+  const convertToMapProperty = (property: PropertyResult) => {
+    const parsedId = parseInt(property.id as any);
+    const idNumber = Number.isFinite(parsedId)
+      ? parsedId
+      : Math.abs(Array.from(String(property.id)).reduce((acc, ch) => ((acc << 5) - acc + ch.charCodeAt(0)) | 0, 0));
+    return {
+      id: idNumber,
+      address: property.address.address,
+      city: property.address.city,
+      state: property.address.state,
+      price: property.estimatedValue,
+      type: property.propertyType,
+      beds: property.bedrooms || 0,
+      baths: property.bathrooms || 0,
+      sqft: property.squareFeet,
+      image: property.image,
+      lat: property.latitude,
+      lng: property.longitude,
+      dealScore: property.dealScore
+    };
+  };
+
+  // Convert to details modal property shape
+  type ModalProperty = {
+    id: number;
+    address: string;
+    city: string;
+    state: string;
+    price: number;
+    type: string;
+    beds: number;
+    baths: number;
+    sqft: number;
+    image: string;
+    cashFlow: number;
+    capRate: number;
+    roi: number;
+    rehabCost: number;
+    motivationFactors: string[];
+    daysOnMarket: number;
+    dealScore: number;
+    lat: number;
+    lng: number;
+  };
+
+  const convertToDetailsProperty = (property: PropertyResult): ModalProperty => {
+    const mapProps = convertToMapProperty(property);
+    return {
+      id: mapProps.id,
+      address: property.address.address,
+      city: property.address.city,
+      state: property.address.state,
+      price: property.estimatedValue,
+      type: property.propertyType,
+      beds: property.bedrooms || 0,
+      baths: property.bathrooms || 0,
+      sqft: property.squareFeet || 0,
+      image: property.image,
+      cashFlow: property.cashFlow,
+      capRate: property.capRate,
+      roi: property.roi,
+      rehabCost: property.rehabCost,
+      motivationFactors: property.motivationFactors,
+      daysOnMarket: property.daysOnMarket,
+      dealScore: property.dealScore,
+      lat: property.latitude,
+      lng: property.longitude,
+    };
+  };
 
   // Handle saving/favoriting properties
   const handleSaveProperty = (propertyId: string) => {
@@ -541,7 +638,7 @@ export const DealFinder: React.FC = () => {
                       }`} 
                       onClick={() => toggleViewMode('map')}
                     >
-                      <Map size={16} className="mr-1.5" />
+                      <MapIcon size={16} className="mr-1.5" />
                       Map
                     </button>
                   </div>
@@ -729,10 +826,10 @@ export const DealFinder: React.FC = () => {
       {/* Property Details Modal */}
       {selectedProperty && (
         <PropertyDetailsModal 
-          property={selectedProperty} 
+          property={convertToDetailsProperty(selectedProperty)} 
           onClose={handleCloseDetails} 
-          onSave={handleSaveProperty} 
-          savedProperties={savedProperties} 
+          onSave={(id) => handleSaveProperty(id.toString())} 
+          savedProperties={savedProperties.map(id => parseInt(id) || 0)} 
         />
       )}
       
@@ -749,7 +846,7 @@ export const DealFinder: React.FC = () => {
       <BulkOfferModal 
         isOpen={showBulkOfferModal} 
         onClose={() => setShowBulkOfferModal(false)} 
-        selectedProperties={selectedProperties} 
+        selectedProperties={selectedProperties.map(id => parseInt(id) || 0)} 
         propertyData={results} 
         investmentStrategy={investmentStrategy} 
       />
