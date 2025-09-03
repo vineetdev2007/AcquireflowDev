@@ -46,13 +46,19 @@ class App {
       },
     }));
 
-    // CORS configuration - Allow all origins
-    this.app.use(cors({
-      origin: true, // This allows all origins
+    // CORS configuration - Reflect origin and handle preflight explicitly
+    const corsOptions: cors.CorsOptions = {
+      origin: true,
       credentials: true,
       methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-      allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
-    }));
+      allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
+      exposedHeaders: ['Content-Type', 'Content-Length'],
+      maxAge: 86400,
+      preflightContinue: false,
+      optionsSuccessStatus: 204,
+    };
+    this.app.use(cors(corsOptions));
+    this.app.options('*', cors(corsOptions));
 
     // Body parsing middleware
     this.app.use(express.json({ limit: '10mb' }));
