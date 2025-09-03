@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import axios from 'axios';
+import { LeaderboardService } from '../services/leaderboardService';
 
 const router = Router();
 
@@ -293,9 +294,45 @@ router.get('/featured', async (_req: Request, res: Response) => {
 });
 
 /**
+ * GET /api/v1/properties/market-kpis
+ * Query: city=Orlando&state=FL
+ */
+router.get('/market-kpis', async (req: Request, res: Response) => {
+  try {
+    const city = ((req.query as any)['city'] as string || '').trim();
+    const state = ((req.query as any)['state'] as string || '').trim();
+    if (!city || !state) {
+      return res.status(400).json({ success: false, message: 'city and state are required, e.g., ?city=Orlando&state=FL' });
+    }
+    const data = await LeaderboardService.computeCityKpisFromSample(city, state);
+    const keys = Object.keys(data || {});
+    const isZeroed = !data || (!data['medianPrice'] && !data['inventory'] && !data['daysOnMarket']);
+    return res.json({ success: true, data, meta: { keys, city, state, zeroed: isZeroed } });
+  } catch (error: any) {
+    const message = error?.message || 'Failed to compute market KPIs';
+    return res.status(500).json({ success: false, message });
+  }
+});
+
+/**
  * GET /api/v1/properties/:id
  * Get property details by ID
  */
+// Leaderboard must be defined BEFORE the catch-all :id route
+/**
+ * GET /api/v1/properties/leaderboard
+ * Compute and return Top 10 cities to invest in
+ */
+router.get('/leaderboard', async (_req: Request, res: Response) => {
+  try {
+    const top10 = await LeaderboardService.computeLeaderboard();
+    return res.json({ success: true, data: top10 });
+  } catch (error: any) {
+    const message = error?.message || 'Failed to compute leaderboard';
+    return res.status(500).json({ success: false, message });
+  }
+});
+
 router.get('/:id', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
