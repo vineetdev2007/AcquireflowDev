@@ -1,4 +1,4 @@
-import { config } from '../config';
+// Frontend API base is computed within this service; no direct config import
 
 // API Response Types based on the provided structure
 export interface PropertyAddress {
@@ -156,13 +156,38 @@ export interface PropertySearchFilters {
   medianIncome?: number;
 }
 
+export interface LeaderboardItem {
+  rank: number;
+  city: string;
+  state: string;
+  county?: string;
+  priceGrowth: number;
+  capRate: number;
+  jobGrowth: number;
+  affordability: number; // 0-100 score
+  investmentScore: number; // 0-100
+  sampleSize: number;
+}
+
+export interface MarketKpisResponse {
+  city: string;
+  state: string;
+  medianPrice: number;
+  priceChangeMoM: number;
+  inventory: number;
+  inventoryChangeMoM: number;
+  daysOnMarket: number;
+  daysOnMarketChangeMoM: number;
+  opportunityScore: number;
+}
+
 class PropertyService {
   private baseUrl: string;
   private apiKey: string;
 
   constructor() {
     // Use your backend API instead of direct external API
-    this.baseUrl = import.meta.env?.VITE_API_URL || 'http://localhost:3000/api/v1';
+    this.baseUrl = (import.meta as any).env?.VITE_API_URL || 'http://localhost:3000/api/v1';
     this.apiKey = ''; // Not needed for backend calls
   }
 
@@ -310,6 +335,27 @@ class PropertyService {
     searchParams.append('locations', location);
     
     const result = await this.request<{success: boolean, data: PropertySearchResponse}>(`/properties/search?${searchParams.toString()}`);
+    return result.data;
+  }
+
+  /**
+   * Get Top 10 cities leaderboard from backend
+   */
+  async getInvestmentLeaderboard(): Promise<LeaderboardItem[]> {
+    const result = await this.request<{ success: boolean; data: LeaderboardItem[] }>(
+      `/properties/leaderboard`
+    );
+    return result.data;
+  }
+
+  /**
+   * Get market KPIs for a city/state pair like "Orlando, FL"
+   */
+  async getMarketKpis(location: string): Promise<MarketKpisResponse> {
+    const [city, state] = location.split(',').map(s => s.trim());
+    if (!city || !state) throw new Error('Invalid location; expected format "City, ST"');
+    const qs = new URLSearchParams({ city, state }).toString();
+    const result = await this.request<{ success: boolean; data: MarketKpisResponse }>(`/properties/market-kpis?${qs}`);
     return result.data;
   }
 }
