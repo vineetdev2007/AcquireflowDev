@@ -1,48 +1,47 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine } from 'recharts';
+import { propertyService, type MonthlyKpiItem } from '../../../services/propertyService';
 export const MarketTrendsChart = ({
   selectedMarket,
   timeRange
 }) => {
   const [selectedMetrics, setSelectedMetrics] = useState(['median', 'average']);
   const [showMarketEvents, setShowMarketEvents] = useState(true);
-  // Generate data based on selected market and time range
-  const generateData = () => {
-    const months = {
-      '1M': 1,
-      '3M': 3,
-      '6M': 6,
-      '1Y': 12,
-      '3Y': 36,
-      '5Y': 60
-    };
-    const data = [];
-    const monthCount = months[timeRange] || 6;
-    const basePrice = selectedMarket.includes('Miami') ? 520000 : selectedMarket.includes('Orlando') ? 375000 : selectedMarket.includes('Tampa') ? 398000 : selectedMarket.includes('Jacksonville') ? 325000 : 400000;
-    const now = new Date();
-    for (let i = monthCount; i >= 0; i--) {
-      const date = new Date(now);
-      date.setMonth(date.getMonth() - i);
-      // Create some realistic price fluctuations
-      const noise = Math.sin(i * 0.5) * 0.03 + (Math.random() * 0.02 - 0.01);
-      const trend = i / monthCount * 0.1; // Slight upward trend
-      const seasonality = Math.sin((date.getMonth() + 3) * Math.PI / 6) * 0.02; // Seasonal effect
-      const multiplier = 1 + noise + trend + seasonality;
-      data.push({
-        date: date.toLocaleDateString('en-US', {
-          month: 'short',
-          year: 'numeric'
-        }),
-        median: Math.round(basePrice * multiplier),
-        average: Math.round(basePrice * multiplier * 1.1),
-        luxury: Math.round(basePrice * multiplier * 2.2),
-        entry: Math.round(basePrice * multiplier * 0.7),
-        timestamp: date.getTime()
-      });
-    }
-    return data;
-  };
-  const data = generateData();
+  const [data, setData] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        setLoading(true);
+        setError(null);
+        const monthsMap = { '1M': 1, '3M': 3, '6M': 6, '1Y': 12, '3Y': 36, '5Y': 60 } as const;
+        const monthCount = monthsMap[(timeRange as keyof typeof monthsMap)] || 6;
+        const monthly: MonthlyKpiItem[] = await propertyService.getMonthlyKpis(selectedMarket, monthCount);
+        const result = monthly.map(item => {
+          const [yyyy, mm] = item.month.split('-');
+          const d = new Date(Number(yyyy), Number(mm) - 1, 1);
+          const median = Math.max(0, Math.round(item.medianPrice));
+          return {
+            date: d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' }),
+            median,
+            average: Math.round(median * 1.1),
+            luxury: Math.round(median * 2.2),
+            entry: Math.round(median * 0.7),
+            timestamp: d.getTime(),
+          };
+        });
+        if (mounted) setData(result);
+      } catch (e) {
+        if (mounted) setError(e?.message || 'Failed to load chart data');
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    })();
+    return () => { mounted = false; };
+  }, [selectedMarket, timeRange]);
   // Market events
   const marketEvents = [{
     date: new Date(new Date().setMonth(new Date().getMonth() - 3)).getTime(),
@@ -53,6 +52,7 @@ export const MarketTrendsChart = ({
   }];
   // Find events that fall within the data range
   const relevantEvents = marketEvents.filter(event => {
+    if (!data || data.length === 0) return false;
     const firstDate = data[0].timestamp;
     const lastDate = data[data.length - 1].timestamp;
     return event.date >= firstDate && event.date <= lastDate;

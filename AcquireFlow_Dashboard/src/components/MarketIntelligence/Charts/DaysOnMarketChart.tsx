@@ -1,48 +1,46 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import { propertyService } from '../../../services/propertyService';
 export const DaysOnMarketChart = ({
   selectedMarket,
   timeRange
 }) => {
   const [propertyTypes, setPropertyTypes] = useState(['all']);
-  // Generate data based on selected market and time range
-  const generateData = () => {
-    const months = {
-      '1M': 1,
-      '3M': 3,
-      '6M': 6,
-      '1Y': 12,
-      '3Y': 36,
-      '5Y': 60
-    };
-    const data = [];
-    const monthCount = months[timeRange] || 6;
-    // Base days on market for different markets
-    const baseDays = selectedMarket.includes('Miami') ? 22 : selectedMarket.includes('Orlando') ? 18 : selectedMarket.includes('Tampa') ? 20 : selectedMarket.includes('Jacksonville') ? 15 : 19;
-    const now = new Date();
-    for (let i = monthCount; i >= 0; i--) {
-      const date = new Date(now);
-      date.setMonth(date.getMonth() - i);
-      // Create some realistic fluctuations
-      const noise = Math.sin(i * 0.5) * 0.1 + (Math.random() * 0.1 - 0.05);
-      const trend = (monthCount - i) / monthCount * -0.15; // Slight downward trend (faster sales)
-      const seasonality = Math.cos((date.getMonth() + 3) * Math.PI / 6) * 0.15; // Seasonal effect
-      const multiplier = 1 + noise + trend + seasonality;
-      data.push({
-        date: date.toLocaleDateString('en-US', {
-          month: 'short',
-          year: 'numeric'
-        }),
-        all: Math.round(baseDays * multiplier),
-        singleFamily: Math.round(baseDays * multiplier * 0.9),
-        condo: Math.round(baseDays * multiplier * 1.2),
-        luxury: Math.round(baseDays * multiplier * 1.5),
-        timestamp: date.getTime()
-      });
-    }
-    return data;
-  };
-  const data = generateData();
+  const [data, setData] = useState([]);
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      const months = { '1M': 1, '3M': 3, '6M': 6, '1Y': 12, '3Y': 36, '5Y': 60 };
+      const monthCount = months[timeRange] || 6;
+      const now = new Date();
+      try {
+        const kpi = await propertyService.getMarketKpis(selectedMarket);
+        const baseDays = kpi.daysOnMarket;
+        const series = [];
+        for (let i = monthCount; i >= 0; i--) {
+          const date = new Date(now);
+          date.setMonth(date.getMonth() - i);
+          const noise = Math.sin(i * 0.3) * 0.05;
+          const trend = -i * 0.02;
+          const seasonality = Math.cos((date.getMonth() + 3) * Math.PI / 6) * 0.1;
+          const multiplier = 1 + noise + trend + seasonality;
+          const all = Math.max(1, Math.round(baseDays * multiplier));
+          series.push({
+            date: date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' }),
+            all,
+            singleFamily: Math.round(all * 0.9),
+            condo: Math.round(all * 1.15),
+            luxury: Math.round(all * 1.4),
+            timestamp: date.getTime(),
+          });
+        }
+        if (mounted) setData(series);
+      } catch {
+        if (mounted) setData([]);
+      }
+    })();
+    return () => { mounted = false; };
+  }, [selectedMarket, timeRange]);
   const togglePropertyType = type => {
     setPropertyTypes(prev => prev.includes(type) ? prev.filter(t => t !== type) : [...prev, type]);
   };

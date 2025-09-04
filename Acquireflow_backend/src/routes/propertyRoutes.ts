@@ -333,6 +333,207 @@ router.get('/leaderboard', async (_req: Request, res: Response) => {
   }
 });
 
+/**
+ * GET /api/v1/properties/market-heatmap
+ * Query: city=Orlando&state=FL&view=price|growth|opportunity (optional)
+ * Returns synthetic but stable neighborhood metrics for heatmap overlays.
+ */
+router.get('/market-heatmap', async (req: Request, res: Response) => {
+  try {
+    const city = ((req.query as any)['city'] as string || '').trim();
+    const state = ((req.query as any)['state'] as string || '').trim();
+    const view = (((req.query as any)['view'] as string) || 'price').trim();
+    if (!city || !state) {
+      return res.status(400).json({ success: false, message: 'city and state are required, e.g., ?city=Orlando&state=FL' });
+    }
+
+    const kpi = await LeaderboardService.computeCityKpisFromSample(city, state);
+    // Base anchors
+    const medianPrice = kpi?.medianPrice ?? 350000;
+    const priceChangeMoM = kpi?.priceChangeMoM ?? 0.5;
+    const opportunity = kpi?.opportunityScore ?? 60;
+
+    // Deterministic pseudo-random based on city/state for stable results
+    const seedStr = `${city}-${state}`;
+    let seed = 0;
+    for (let i = 0; i < seedStr.length; i++) seed = (seed * 31 + seedStr.charCodeAt(i)) >>> 0;
+    const rand = () => {
+      // xorshift
+      seed ^= seed << 13; seed ^= seed >>> 17; seed ^= seed << 5; return (seed >>> 0) / 0xffffffff;
+    };
+
+    const names = ['Downtown', 'Westside', 'Northside', 'Eastside', 'Southside', 'Midtown', 'Lakeside', 'Riverside', 'Uptown', 'Old Town'];
+    const neighborhoods = names.slice(0, 8 + Math.floor(rand() * 3)).map((name) => {
+      const pMult = 0.85 + rand() * 0.35; // 0.85 - 1.20
+      const growth = (priceChangeMoM + (rand() * 0.8 - 0.2)).toFixed(2); // around MoM +/-
+      const opp = Math.max(0, Math.min(100, Math.round(opportunity + (rand() * 20 - 10))));
+      return {
+        name,
+        x: Math.round(10 + rand() * 80),
+        y: Math.round(10 + rand() * 80),
+        price: Math.round(medianPrice * pMult),
+        growth: parseFloat(growth),
+        opportunity: opp,
+      };
+    });
+
+    return res.json({ success: true, data: { city, state, view, neighborhoods } });
+  } catch (error: any) {
+    const message = error?.message || 'Failed to compute market heatmap';
+    return res.status(500).json({ success: false, message });
+  }
+});
+
+/**
+ * GET /api/v1/properties/agent-activity
+ * Query: city=Orlando&state=FL
+ * Returns brokerage market share and top agents (synthetic but stable).
+ */
+router.get('/agent-activity', async (req: Request, res: Response) => {
+  try {
+    const city = ((req.query as any)['city'] as string || '').trim();
+    const state = ((req.query as any)['state'] as string || '').trim();
+    if (!city || !state) {
+      return res.status(400).json({ success: false, message: 'city and state are required, e.g., ?city=Orlando&state=FL' });
+    }
+    const kpi = await LeaderboardService.computeCityKpisFromSample(city, state);
+    const opportunity = kpi?.opportunityScore ?? 60;
+
+    const seedStr = `${city}-${state}-agents`;
+    let seed = 0; for (let i = 0; i < seedStr.length; i++) seed = (seed * 31 + seedStr.charCodeAt(i)) >>> 0;
+    const rand = () => { seed ^= seed << 13; seed ^= seed >>> 17; seed ^= seed << 5; return (seed >>> 0) / 0xffffffff; };
+
+    const companies = ['Keller Williams', 'Coldwell Banker', 'RE/MAX', 'Century 21', 'Douglas Elliman', 'Compass', 'eXp Realty'];
+    // Generate random weights that sum to 100
+    const weights = companies.slice(0, 5 + Math.floor(rand() * 2)).map(() => 10 + Math.floor(rand() * 25));
+    const sum = weights.reduce((a, b) => a + b, 0) || 1;
+    const breakdown = weights.map((w, i) => {
+      const value = Math.round((w / sum) * 100);
+      const transactions = Math.round(150 + rand() * 400 * (opportunity / 100));
+      const avgPrice = 300000 + rand() * 400000;
+      const volume = `$${Math.round(transactions * avgPrice).toLocaleString()}`;
+      return { name: companies[i], value, transactions, volume };
+    });
+    // Adjust to sum 100 exactly (guarded for TS noUncheckedIndexedAccess)
+    const diff = 100 - breakdown.reduce((a, b) => a + b.value, 0);
+    if (breakdown.length > 0) {
+      const first = breakdown[0];
+      if (first) first.value += diff;
+    }
+
+    const firstNames = ['Sarah', 'Michael', 'Jennifer', 'Robert', 'Emily', 'David', 'Sophia', 'Daniel'];
+    const lastNames = ['Johnson', 'Rodriguez', 'Smith', 'Williams', 'Brown', 'Davis', 'Martinez', 'Miller'];
+    const topAgents = Array.from({ length: 3 }).map(() => {
+      const name = `${firstNames[Math.floor(rand() * firstNames.length)]} ${lastNames[Math.floor(rand() * lastNames.length)]}`;
+      const idx = breakdown.length > 0 ? Math.floor(rand() * breakdown.length) : -1;
+      const selected = idx >= 0 ? breakdown[idx] : undefined;
+      const company = selected?.name || companies[0];
+      const transactions = Math.round(20 + rand() * 60);
+      const volume = `$${Math.round((300000 + rand() * 500000) * transactions).toLocaleString()}`;
+      return { name, company, transactions, volume };
+    });
+
+    return res.json({ success: true, data: { city, state, breakdown, topAgents } });
+  } catch (error: any) {
+    const message = error?.message || 'Failed to compute agent activity';
+    return res.status(500).json({ success: false, message });
+  }
+});
+
+/**
+ * GET /api/v1/properties/monthly-kpis
+ * Query: city=Orlando&state=FL&months=24
+ * Returns synthetic, deterministic monthly KPIs suitable for charts.
+ */
+router.get('/monthly-kpis', async (req: Request, res: Response) => {
+  try {
+    const city = ((req.query as any)['city'] as string || '').trim();
+    const state = ((req.query as any)['state'] as string || '').trim();
+    const monthsParam = parseInt(((req.query as any)['months'] as string) || '24', 10);
+    const months = Math.max(3, Math.min(120, isNaN(monthsParam) ? 24 : monthsParam));
+    if (!city || !state) {
+      return res.status(400).json({ success: false, message: 'city and state are required, e.g., ?city=Orlando&state=FL' });
+    }
+
+    // anchor from KPI
+    const kpi = await LeaderboardService.computeCityKpisFromSample(city, state);
+    const anchorPrice = kpi?.medianPrice ?? 350000;
+    const anchorInventory = kpi?.inventory ?? 3000;
+    const anchorDom = kpi?.daysOnMarket ?? 22;
+    const priceMoM = (kpi?.priceChangeMoM ?? 0.5) / 100; // 0.005
+
+    // deterministic randomness for stability
+    const seedStr = `${city}-${state}-monthly`;
+    let seed = 0; for (let i = 0; i < seedStr.length; i++) seed = (seed * 31 + seedStr.charCodeAt(i)) >>> 0;
+    const rand = () => { seed ^= seed << 13; seed ^= seed >>> 17; seed ^= seed << 5; return (seed >>> 0) / 0xffffffff; };
+
+    const out: Array<{ month: string; medianPrice: number; inventory: number; daysOnMarket: number; salesIndex: number; }> = [];
+    const now = new Date();
+    for (let i = months - 1; i >= 0; i--) {
+      const d = new Date(now);
+      d.setMonth(d.getMonth() - i);
+      const monthKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      const season = Math.sin((d.getMonth() + 3) * Math.PI / 6) * 0.03; // ±3%
+      const noise = (rand() * 0.01) - 0.005; // ±0.5%
+
+      // reverse compounding from anchor to past
+      const monthsBack = months - 1 - i;
+      const priceBase = anchorPrice / Math.pow(1 + priceMoM, monthsBack);
+      const medianPrice = Math.max(50000, Math.round(priceBase * (1 + season + noise)));
+
+      const inventorySeason = Math.sin((d.getMonth() + 2) * Math.PI / 6) * 0.08; // ±8%
+      const inventoryNoise = (rand() * 0.04) - 0.02; // ±2%
+      const inventory = Math.max(0, Math.round(anchorInventory * (1 + inventorySeason + inventoryNoise)));
+
+      const domSeason = Math.cos((d.getMonth() + 3) * Math.PI / 6) * 0.12; // ±12%
+      const domNoise = (rand() * 0.06) - 0.03; // ±3%
+      const daysOnMarket = Math.max(1, Math.round(anchorDom * (1 + domSeason + domNoise)));
+
+      const salesIndex = Math.round(100 * (1 + Math.sin((d.getMonth()) * Math.PI / 6) * 0.2)); // 80-120
+
+      out.push({ month: monthKey, medianPrice, inventory, daysOnMarket, salesIndex });
+    }
+
+    return res.json({ success: true, data: out, meta: { city, state, months } });
+  } catch (error: any) {
+    const message = error?.message || 'Failed to compute monthly KPIs';
+    return res.status(500).json({ success: false, message });
+  }
+});
+/**
+ * GET /api/v1/properties/opportunity-summary
+ * Query: city=Orlando&state=FL
+ * Returns a dynamic summary used by the Investment Opportunity Alert card.
+ */
+router.get('/opportunity-summary', async (req: Request, res: Response) => {
+  try {
+    const city = ((req.query as any)['city'] as string || '').trim();
+    const state = ((req.query as any)['state'] as string || '').trim();
+    if (!city || !state) {
+      return res.status(400).json({ success: false, message: 'city and state are required, e.g., ?city=Orlando&state=FL' });
+    }
+
+    const kpi = await LeaderboardService.computeCityKpisFromSample(city, state);
+    const opp = Math.max(0, Math.min(100, kpi?.opportunityScore ?? 60));
+    const medianPrice = kpi?.medianPrice ?? 350000;
+
+    // Deterministic small jitter for stability per city
+    const seedStr = `${city}-${state}-opp-summary`;
+    let seed = 0; for (let i = 0; i < seedStr.length; i++) seed = (seed * 31 + seedStr.charCodeAt(i)) >>> 0;
+    const rand = () => { seed ^= seed << 13; seed ^= seed >>> 17; seed ^= seed << 5; return (seed >>> 0) / 0xffffffff; };
+
+    const jitter = (range: number) => (rand() * 2 - 1) * range; // ±range
+
+    const avgCapRate = +(4 + (opp / 100) * 3 + jitter(0.2)).toFixed(1); // 4%–7% ±0.2
+    const projectedRoi = +(8 + (opp / 100) * 12 + jitter(0.5)).toFixed(1); // 8%–20% ±0.5
+    const count = Math.max(3, Math.round(6 + (opp / 100) * 18 + jitter(2))); // ~6–24
+
+    return res.json({ success: true, data: { count, avgCapRate, medianPrice, projectedRoi } });
+  } catch (error: any) {
+    const message = error?.message || 'Failed to compute opportunity summary';
+    return res.status(500).json({ success: false, message });
+  }
+});
 router.get('/:id', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
@@ -388,6 +589,41 @@ router.get('/:id', async (req: Request, res: Response) => {
         message: 'Internal server error while fetching property details'
       });
     }
+  }
+});
+
+/**
+ * GET /api/v1/properties/opportunity-summary
+ * Query: city=Orlando&state=FL
+ * Returns a dynamic summary used by the Investment Opportunity Alert card.
+ */
+router.get('/opportunity-summary', async (req: Request, res: Response) => {
+  try {
+    const city = ((req.query as any)['city'] as string || '').trim();
+    const state = ((req.query as any)['state'] as string || '').trim();
+    if (!city || !state) {
+      return res.status(400).json({ success: false, message: 'city and state are required, e.g., ?city=Orlando&state=FL' });
+    }
+
+    const kpi = await LeaderboardService.computeCityKpisFromSample(city, state);
+    const opp = Math.max(0, Math.min(100, kpi?.opportunityScore ?? 60));
+    const medianPrice = kpi?.medianPrice ?? 350000;
+
+    // Deterministic small jitter for stability per city
+    const seedStr = `${city}-${state}-opp-summary`;
+    let seed = 0; for (let i = 0; i < seedStr.length; i++) seed = (seed * 31 + seedStr.charCodeAt(i)) >>> 0;
+    const rand = () => { seed ^= seed << 13; seed ^= seed >>> 17; seed ^= seed << 5; return (seed >>> 0) / 0xffffffff; };
+
+    const jitter = (range: number) => (rand() * 2 - 1) * range; // ±range
+
+    const avgCapRate = +(4 + (opp / 100) * 3 + jitter(0.2)).toFixed(1); // 4%–7% ±0.2
+    const projectedRoi = +(8 + (opp / 100) * 12 + jitter(0.5)).toFixed(1); // 8%–20% ±0.5
+    const count = Math.max(3, Math.round(6 + (opp / 100) * 18 + jitter(2))); // ~6–24
+
+    return res.json({ success: true, data: { count, avgCapRate, medianPrice, projectedRoi } });
+  } catch (error: any) {
+    const message = error?.message || 'Failed to compute opportunity summary';
+    return res.status(500).json({ success: false, message });
   }
 });
 

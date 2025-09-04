@@ -1,43 +1,53 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
+import { propertyService, type MonthlyKpiItem } from '../../../services/propertyService';
 export const SeasonalPatternsChart = ({
   selectedMarket
 }) => {
   const [selectedMetric, setSelectedMetric] = useState('sales'); // sales, price, inventory
-  // Generate data based on selected market
-  const generateData = () => {
-    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    // Different seasonal patterns based on market
-    const patterns = {
-      'Orlando, FL': {
-        sales: [0.8, 0.85, 0.95, 1.1, 1.2, 1.3, 1.2, 1.1, 0.9, 0.85, 0.8, 0.75],
-        price: [0.95, 0.97, 1.0, 1.05, 1.1, 1.12, 1.1, 1.08, 1.05, 1.0, 0.98, 0.96],
-        inventory: [1.1, 1.05, 1.0, 0.95, 0.9, 0.85, 0.9, 0.95, 1.0, 1.05, 1.1, 1.15]
-      },
-      'Miami, FL': {
-        sales: [1.0, 1.1, 1.2, 1.25, 1.2, 1.1, 0.95, 0.85, 0.8, 0.85, 0.9, 0.95],
-        price: [0.98, 1.0, 1.05, 1.1, 1.15, 1.12, 1.08, 1.05, 1.0, 0.98, 0.97, 0.96],
-        inventory: [0.95, 0.9, 0.85, 0.8, 0.85, 0.9, 1.0, 1.1, 1.15, 1.1, 1.05, 1.0]
-      },
-      'Tampa, FL': {
-        sales: [0.85, 0.9, 1.0, 1.15, 1.25, 1.2, 1.1, 1.0, 0.9, 0.85, 0.8, 0.85],
-        price: [0.96, 0.98, 1.0, 1.05, 1.1, 1.15, 1.12, 1.08, 1.05, 1.0, 0.97, 0.95],
-        inventory: [1.05, 1.0, 0.95, 0.9, 0.85, 0.9, 0.95, 1.0, 1.05, 1.1, 1.15, 1.1]
+  const [data, setData] = useState([]);
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        // Try to load monthly KPIs for past 12 months
+        const monthly: MonthlyKpiItem[] = await propertyService.getMonthlyKpis(selectedMarket, 12);
+        const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        const avgPrice = (monthly.reduce((a, b) => a + b.medianPrice, 0) / (monthly.length || 1)) || 1;
+        const avgInventory = (monthly.reduce((a, b) => a + b.inventory, 0) / (monthly.length || 1)) || 1;
+        const built = monthly.map(item => {
+          const [y, m] = item.month.split('-');
+          const label = months[Number(m) - 1] || item.month;
+          return {
+            month: label,
+            sales: item.salesIndex,
+            price: Math.round((item.medianPrice / avgPrice) * 100),
+            inventory: Math.round((item.inventory / avgInventory) * 100),
+            current: false
+          };
+        });
+        if (mounted) setData(built);
+      } catch {
+        // Fallback to modeled seasonality if monthly history is unavailable
+        const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        const baseSales = 100;
+        const basePrice = 100;
+        const baseInventory = 100;
+        const seasonSales = [0.8,0.85,0.95,1.05,1.15,1.2,1.1,1.0,0.9,0.85,0.82,0.8];
+        const seasonPrice = [0.97,0.98,1.0,1.03,1.06,1.08,1.06,1.04,1.02,1.0,0.98,0.97];
+        const seasonInventory = [1.1,1.05,1.0,0.95,0.9,0.85,0.9,0.95,1.0,1.05,1.1,1.15];
+        const fallback = months.map((m, i) => ({
+          month: m,
+          sales: Math.round(baseSales * seasonSales[i]),
+          price: Math.round(basePrice * seasonPrice[i]),
+          inventory: Math.round(baseInventory * seasonInventory[i]),
+          current: m === new Date().toLocaleString('en-US', { month: 'short' })
+        }));
+        if (mounted) setData(fallback);
       }
-    };
-    const marketPattern = patterns[selectedMarket] || patterns['Orlando, FL'];
-    const data = months.map((month, index) => ({
-      month,
-      sales: Math.round(marketPattern.sales[index] * 100),
-      price: Math.round(marketPattern.price[index] * 100),
-      inventory: Math.round(marketPattern.inventory[index] * 100),
-      current: month === new Date().toLocaleString('en-US', {
-        month: 'short'
-      })
-    }));
-    return data;
-  };
-  const data = generateData();
+    })();
+    return () => { mounted = false; };
+  }, [selectedMarket]);
   const CustomTooltip = ({
     active,
     payload,

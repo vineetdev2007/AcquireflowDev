@@ -1,95 +1,24 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts';
 import { ArrowUpRight } from 'lucide-react';
+import { propertyService, type AgentActivityResponse } from '../../../services/propertyService';
 export const AgentActivityChart = ({
   selectedMarket
 }) => {
   const [activeIndex, setActiveIndex] = useState(null);
-  // Generate data based on selected market
-  const generateData = () => {
-    const marketData = {
-      'Orlando, FL': [{
-        name: 'Keller Williams',
-        value: 28,
-        transactions: 345,
-        volume: '$124M'
-      }, {
-        name: 'Coldwell Banker',
-        value: 22,
-        transactions: 287,
-        volume: '$98M'
-      }, {
-        name: 'RE/MAX',
-        value: 18,
-        transactions: 243,
-        volume: '$87M'
-      }, {
-        name: 'Century 21',
-        value: 15,
-        transactions: 198,
-        volume: '$76M'
-      }, {
-        name: 'Others',
-        value: 17,
-        transactions: 223,
-        volume: '$82M'
-      }],
-      'Miami, FL': [{
-        name: 'Douglas Elliman',
-        value: 25,
-        transactions: 412,
-        volume: '$198M'
-      }, {
-        name: 'Coldwell Banker',
-        value: 21,
-        transactions: 356,
-        volume: '$167M'
-      }, {
-        name: 'Keller Williams',
-        value: 17,
-        transactions: 289,
-        volume: '$134M'
-      }, {
-        name: "ONE Sotheby's",
-        value: 15,
-        transactions: 245,
-        volume: '$178M'
-      }, {
-        name: 'Others',
-        value: 22,
-        transactions: 378,
-        volume: '$145M'
-      }],
-      'Tampa, FL': [{
-        name: 'Keller Williams',
-        value: 26,
-        transactions: 312,
-        volume: '$108M'
-      }, {
-        name: 'RE/MAX',
-        value: 23,
-        transactions: 275,
-        volume: '$96M'
-      }, {
-        name: 'Coldwell Banker',
-        value: 19,
-        transactions: 228,
-        volume: '$82M'
-      }, {
-        name: 'Century 21',
-        value: 14,
-        transactions: 168,
-        volume: '$61M'
-      }, {
-        name: 'Others',
-        value: 18,
-        transactions: 216,
-        volume: '$74M'
-      }]
-    };
-    return marketData[selectedMarket] || marketData['Orlando, FL'];
-  };
-  const data = generateData();
+  const [data, setData] = useState<AgentActivityResponse | null>(null);
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const result = await propertyService.getAgentActivity(selectedMarket);
+        if (mounted) setData(result);
+      } catch {
+        if (mounted) setData(null);
+      }
+    })();
+    return () => { mounted = false; };
+  }, [selectedMarket]);
   const COLORS = ['#3AB795', '#FECA57', '#FF6B6B', '#4B5563', '#9CA3AF'];
   const CustomTooltip = ({
     active,
@@ -144,8 +73,8 @@ export const AgentActivityChart = ({
       <div className="flex-1">
         <ResponsiveContainer width="100%" height="100%">
           <PieChart>
-            <Pie data={data} cx="50%" cy="50%" innerRadius={60} outerRadius={80} paddingAngle={2} dataKey="value" onMouseEnter={onPieEnter} onMouseLeave={onPieLeave}>
-              {data.map((entry, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} stroke={activeIndex === index ? '#fff' : 'none'} strokeWidth={2} style={{
+            <Pie data={data?.breakdown || []} cx="50%" cy="50%" innerRadius={60} outerRadius={80} paddingAngle={2} dataKey="value" onMouseEnter={onPieEnter} onMouseLeave={onPieLeave}>
+              {(data?.breakdown || []).map((entry, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} stroke={activeIndex === index ? '#fff' : 'none'} strokeWidth={2} style={{
               filter: activeIndex === index ? 'drop-shadow(0px 0px 4px rgba(0,0,0,0.3))' : 'none',
               transform: activeIndex === index ? 'scale(1.05)' : 'scale(1)',
               transformOrigin: 'center',
@@ -166,7 +95,7 @@ export const AgentActivityChart = ({
           </button>
         </div>
         <div className="space-y-1.5">
-          {topAgents.map((agent, index) => <div key={index} className="flex justify-between items-center text-xs">
+          {(data?.topAgents || []).map((agent, index) => <div key={index} className="flex justify-between items-center text-xs">
               <div className="flex items-center">
                 <span className="w-4 h-4 rounded-full bg-gray-200 flex items-center justify-center mr-2 text-[10px]">
                   {index + 1}

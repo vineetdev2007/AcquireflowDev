@@ -1,54 +1,65 @@
-import React from 'react';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine } from 'recharts';
+import { useEffect, useState } from 'react';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
+import { propertyService } from '../../../services/propertyService';
+type InventoryLevelsChartProps = {
+  selectedMarket: string;
+  timeRange: string;
+};
+
+type InventoryDatum = {
+  date: string;
+  inventory: number;
+  newListings: number;
+  balanced: number;
+  timestamp: number;
+};
+
 export const InventoryLevelsChart = ({
   selectedMarket,
   timeRange
-}) => {
-  // Generate data based on selected market and time range
-  const generateData = () => {
-    const months = {
-      '1M': 1,
-      '3M': 3,
-      '6M': 6,
-      '1Y': 12,
-      '3Y': 36,
-      '5Y': 60
-    };
-    const data = [];
-    const monthCount = months[timeRange] || 6;
-    const baseInventory = selectedMarket.includes('Miami') ? 5800 : selectedMarket.includes('Orlando') ? 3200 : selectedMarket.includes('Tampa') ? 2900 : selectedMarket.includes('Jacksonville') ? 2100 : 3000;
-    const now = new Date();
-    for (let i = monthCount; i >= 0; i--) {
-      const date = new Date(now);
-      date.setMonth(date.getMonth() - i);
-      // Create some realistic inventory fluctuations
-      const noise = Math.sin(i * 0.5) * 0.1 + (Math.random() * 0.1 - 0.05);
-      const trend = (monthCount - i) / monthCount * 0.15; // Slight downward trend
-      const seasonality = Math.sin((date.getMonth() + 3) * Math.PI / 6) * 0.1; // Seasonal effect
-      const multiplier = 1 + noise - trend + seasonality;
-      data.push({
-        date: date.toLocaleDateString('en-US', {
-          month: 'short',
-          year: 'numeric'
-        }),
-        inventory: Math.round(baseInventory * multiplier),
-        newListings: Math.round(baseInventory * multiplier * 0.2),
-        balanced: baseInventory * 0.9,
-        timestamp: date.getTime()
-      });
-    }
-    return data;
-  };
-  const data = generateData();
+}: InventoryLevelsChartProps) => {
+  const [data, setData] = useState<InventoryDatum[]>([]);
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      const months = { '1M': 1, '3M': 3, '6M': 6, '1Y': 12, '3Y': 36, '5Y': 60 } as const;
+      const monthCount = months[(timeRange as keyof typeof months)] || 6;
+      const now = new Date();
+      try {
+        const kpi = await propertyService.getMarketKpis(selectedMarket);
+        const baseInventory = kpi.inventory;
+        const series: InventoryDatum[] = [];
+        for (let i = monthCount; i >= 0; i--) {
+          const date = new Date(now);
+          date.setMonth(date.getMonth() - i);
+          const noise = Math.sin(i * 0.5) * 0.05;
+          const trend = -i * 0.01; // slight decrease into the past
+          const seasonality = Math.sin((date.getMonth() + 2) * Math.PI / 6) * 0.08;
+          const multiplier = 1 + noise + trend + seasonality;
+          series.push({
+            date: date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' }),
+            inventory: Math.max(0, Math.round(baseInventory * multiplier)),
+            newListings: Math.max(0, Math.round(baseInventory * multiplier * 0.22)),
+            balanced: Math.round(baseInventory * 0.9),
+            timestamp: date.getTime(),
+          });
+        }
+        if (mounted) setData(series);
+      } catch {
+        if (mounted) setData([]);
+      }
+    })();
+    return () => { mounted = false; };
+  }, [selectedMarket, timeRange]);
   const CustomTooltip = ({
     active,
     payload,
     label
-  }) => {
+  }: any) => {
     if (active && payload && payload.length) {
-      const inventoryData = payload.find(p => p.dataKey === 'inventory');
-      const newListingsData = payload.find(p => p.dataKey === 'newListings');
-      const balancedData = payload.find(p => p.dataKey === 'balanced');
+      const inventoryData = payload.find((p: any) => p.dataKey === 'inventory');
+      const newListingsData = payload.find((p: any) => p.dataKey === 'newListings');
+      const balancedData = payload.find((p: any) => p.dataKey === 'balanced');
       const inventoryValue = inventoryData ? inventoryData.value : 0;
       const balancedValue = balancedData ? balancedData.value : 0;
       const marketStatus = inventoryValue > balancedValue * 1.1 ? "Buyer's Market" : inventoryValue < balancedValue * 0.9 ? "Seller's Market" : 'Balanced Market';
@@ -116,12 +127,12 @@ export const InventoryLevelsChart = ({
           <Tooltip content={<CustomTooltip />} />
           <Bar dataKey="inventory" fill="#3AB795" radius={[4, 4, 0, 0]} animationDuration={1000} name="Total Inventory" />
           <Bar dataKey="newListings" fill="#FECA57" radius={[4, 4, 0, 0]} animationDuration={1000} name="New Listings" />
-          <ReferenceLine y={data[0].balanced} stroke="#9CA3AF" strokeDasharray="3 3" label={{
+          {data.length > 0 && typeof data[0].balanced === 'number' && <ReferenceLine y={data[0].balanced} stroke="#9CA3AF" strokeDasharray="3 3" label={{
           value: 'Balanced Market',
           position: 'right',
           fill: '#9CA3AF',
           fontSize: 10
-        }} />
+        }} />}
         </BarChart>
       </ResponsiveContainer>
     </div>;

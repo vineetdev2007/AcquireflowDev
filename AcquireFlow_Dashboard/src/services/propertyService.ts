@@ -181,6 +181,51 @@ export interface MarketKpisResponse {
   opportunityScore: number;
 }
 
+export interface HeatmapNeighborhood {
+  name: string;
+  x: number; // 0-100 percentage
+  y: number; // 0-100 percentage
+  price: number;
+  growth: number; // percent
+  opportunity: number; // 0-100
+}
+
+export interface MarketHeatmapResponse {
+  city: string;
+  state: string;
+  view: 'price' | 'growth' | 'opportunity';
+  neighborhoods: HeatmapNeighborhood[];
+}
+
+export interface AgentBreakdownItem {
+  name: string; // brokerage
+  value: number; // percent share summing to 100
+  transactions: number;
+  volume: string;
+}
+
+export interface AgentActivityResponse {
+  city: string;
+  state: string;
+  breakdown: AgentBreakdownItem[];
+  topAgents: { name: string; company: string; transactions: number; volume: string }[];
+}
+
+export interface MonthlyKpiItem {
+  month: string; // YYYY-MM
+  medianPrice: number;
+  inventory: number;
+  daysOnMarket: number;
+  salesIndex: number; // 80-120 normalized
+}
+
+export interface OpportunitySummary {
+  count: number;
+  avgCapRate: number; // percent
+  medianPrice: number;
+  projectedRoi: number; // percent
+}
+
 class PropertyService {
   private baseUrl: string;
   private apiKey: string;
@@ -356,6 +401,38 @@ class PropertyService {
     if (!city || !state) throw new Error('Invalid location; expected format "City, ST"');
     const qs = new URLSearchParams({ city, state }).toString();
     const result = await this.request<{ success: boolean; data: MarketKpisResponse }>(`/properties/market-kpis?${qs}`);
+    return result.data;
+  }
+
+  async getMarketHeatmap(location: string, view: 'price' | 'growth' | 'opportunity' = 'price'): Promise<MarketHeatmapResponse> {
+    const [city, state] = location.split(',').map(s => s.trim());
+    if (!city || !state) throw new Error('Invalid location; expected format "City, ST"');
+    const qs = new URLSearchParams({ city, state, view }).toString();
+    const result = await this.request<{ success: boolean; data: MarketHeatmapResponse }>(`/properties/market-heatmap?${qs}`);
+    return result.data;
+  }
+
+  async getAgentActivity(location: string): Promise<AgentActivityResponse> {
+    const [city, state] = location.split(',').map(s => s.trim());
+    if (!city || !state) throw new Error('Invalid location; expected format "City, ST"');
+    const qs = new URLSearchParams({ city, state }).toString();
+    const result = await this.request<{ success: boolean; data: AgentActivityResponse }>(`/properties/agent-activity?${qs}`);
+    return result.data;
+  }
+
+  async getMonthlyKpis(location: string, months: number = 24): Promise<MonthlyKpiItem[]> {
+    const [city, state] = location.split(',').map(s => s.trim());
+    if (!city || !state) throw new Error('Invalid location; expected format "City, ST"');
+    const qs = new URLSearchParams({ city, state, months: String(months) }).toString();
+    const result = await this.request<{ success: boolean; data: MonthlyKpiItem[] }>(`/properties/monthly-kpis?${qs}`);
+    return result.data;
+  }
+
+  async getOpportunitySummary(location: string): Promise<OpportunitySummary> {
+    const [city, state] = location.split(',').map(s => s.trim());
+    if (!city || !state) throw new Error('Invalid location; expected format "City, ST"');
+    const qs = new URLSearchParams({ city, state }).toString();
+    const result = await this.request<{ success: boolean; data: OpportunitySummary }>(`/properties/opportunity-summary?${qs}`);
     return result.data;
   }
 }

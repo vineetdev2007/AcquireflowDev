@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { BarChart2, Building, Calculator, ChevronDown, LineChart, Map, Target, TrendingDown, TrendingUp, Users, Bell, Search, Download, Filter, PlusCircle, Info, RefreshCw } from 'lucide-react';
 import { DataVisualizationGrid } from './DataVisualizationGrid';
 import { CityAnalysisDashboard } from './CityAnalysisDashboard/CityAnalysisDashboard';
@@ -11,6 +11,8 @@ export const MarketIntelligence = () => {
   const [timeRange, setTimeRange] = useState('6M');
   const [selectedTab, setSelectedTab] = useState('dashboard');
   const [isSearchExpanded, setIsSearchExpanded] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+  const [comparisonMarkets, setComparisonMarkets] = useState<string[]>([selectedMarket]);
   // Available markets for selection
   const availableMarkets = ['Orlando, FL', 'Miami, FL', 'Tampa, FL', 'Jacksonville, FL', 'Fort Lauderdale, FL', 'West Palm Beach, FL', 'Naples, FL', 'Sarasota, FL', 'Fort Myers, FL', 'Daytona Beach, FL'];
   // Market metrics (dynamic)
@@ -54,6 +56,84 @@ export const MarketIntelligence = () => {
   // Handle time range changes
   const handleTimeRangeChange = (range: string) => {
     setTimeRange(range);
+  };
+  // Compare handler (invoked from TopInvestmentCities via DataVisualizationGrid)
+  const handleCompare = (cities: string[]) => {
+    const normalize = (s: string) => s.trim().replace(/\s+/g, ' ');
+    const deduped = Array.from(new Set(cities.filter(Boolean).map(normalize)));
+    setComparisonMarkets(deduped.length > 0 ? deduped : [selectedMarket]);
+    setSelectedTab('comparison');
+  };
+  const handleAddComparisonMarket = (market: string) => {
+    setComparisonMarkets(prev => Array.from(new Set([...prev, market])));
+  };
+  const handleRemoveComparisonMarket = (market: string) => {
+    setComparisonMarkets(prev => prev.filter(m => m !== market));
+  };
+  // Export helpers
+  const toCsv = (rows: (string | number)[][]): string => {
+    const escapeCell = (value: string | number) => {
+      const str = String(value ?? '');
+      if (/[",\n]/.test(str)) {
+        return '"' + str.replace(/"/g, '""') + '"';
+      }
+      return str;
+    };
+    return rows.map(r => r.map(escapeCell).join(',')).join('\n');
+  };
+  const download = (filename: string, content: string, mime: string) => {
+    const blob = new Blob([content], { type: mime + ';charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+  const handleExport = (format: 'csv' | 'json' = 'csv') => {
+    try {
+      setIsExporting(true);
+      const safeMarket = selectedMarket.replace(/[^a-z0-9]+/gi, '-').toLowerCase();
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      if (format === 'json') {
+        const payload = {
+          meta: { market: selectedMarket, timeRange, exportedAt: new Date().toISOString() },
+          kpis: marketMetrics,
+        };
+        download(`market-intelligence-${safeMarket}-${timeRange}-${timestamp}.json`, JSON.stringify(payload, null, 2), 'application/json');
+        return;
+      }
+      const headers = [
+        'Market',
+        'Time Range',
+        'Median Price',
+        'Price Change MoM',
+        'Inventory',
+        'Inventory Change MoM',
+        'Days On Market',
+        'Days On Market Change MoM',
+        'Opportunity Score',
+        'Exported At'
+      ];
+      const values = [
+        selectedMarket,
+        timeRange,
+        marketMetrics.medianPrice,
+        marketMetrics.priceChange,
+        marketMetrics.inventory,
+        marketMetrics.inventoryChange,
+        marketMetrics.daysOnMarket,
+        marketMetrics.daysOnMarketChange,
+        marketMetrics.opportunityScore,
+        new Date().toISOString()
+      ];
+      const csv = toCsv([headers, values]);
+      download(`market-intelligence-${safeMarket}-${timeRange}-${timestamp}.csv`, csv, 'text/csv');
+    } finally {
+      setIsExporting(false);
+    }
   };
   return <div className="flex flex-col h-full bg-gray-50">
       {/* Header */}
@@ -236,9 +316,9 @@ export const MarketIntelligence = () => {
               <Info size={14} className="mr-1.5" />
               Methodology
             </button>
-            <button className="flex items-center text-sm text-gray-600 hover:text-gray-800 transition-colors">
+            <button className="flex items-center text-sm text-gray-600 hover:text-gray-800 transition-colors disabled:opacity-60" onClick={() => handleExport('csv')} disabled={isExporting} title="Export KPIs as CSV">
               <Download size={14} className="mr-1.5" />
-              Export Data
+              {isExporting ? 'Exporting…' : 'Export Data'}
             </button>
             <button className="flex items-center bg-emerald-500 text-white px-3 py-1.5 rounded-lg text-sm hover:bg-emerald-600 transition-colors">
               <PlusCircle size={14} className="mr-1.5" />
@@ -248,9 +328,9 @@ export const MarketIntelligence = () => {
         </div>
         {/* Tab Content */}
         <div className="animate-fadeIn">
-          {selectedTab === 'dashboard' && <DataVisualizationGrid selectedMarket={selectedMarket} timeRange={timeRange} />}
+          {selectedTab === 'dashboard' && <DataVisualizationGrid selectedMarket={selectedMarket} timeRange={timeRange} onCompare={handleCompare} />}
           {selectedTab === 'city' && <CityAnalysisDashboard selectedCity={selectedMarket} onCityChange={handleMarketChange} />}
-          {selectedTab === 'comparison' && <MarketComparisonGrid selectedMarkets={[selectedMarket]} onAddMarket={() => {}} onRemoveMarket={() => {}} availableMarkets={availableMarkets} />}
+          {selectedTab === 'comparison' && <MarketComparisonGrid selectedMarkets={comparisonMarkets} onAddMarket={handleAddComparisonMarket} onRemoveMarket={handleRemoveComparisonMarket} availableMarkets={availableMarkets} />}
           {selectedTab === 'entry' && <MarketEntryRecommendations investorProfile={{
           strategy: 'buy_and_hold',
           experience: 'intermediate',

@@ -1,17 +1,26 @@
 import React, { useEffect, useState } from 'react';
 import { Map, ChevronDown, ZoomIn, ZoomOut, LocateFixed } from 'lucide-react';
+import { propertyService, type MarketHeatmapResponse } from '../../../services/propertyService';
 export const PriceHeatMap = ({
   selectedMarket
 }) => {
   const [mapView, setMapView] = useState('price'); // price, growth, opportunity
   const [loading, setLoading] = useState(true);
-  // Simulate loading
+  const [heatmap, setHeatmap] = useState<MarketHeatmapResponse | null>(null);
+  // Load from backend
   useEffect(() => {
-    const timer = setTimeout(() => {
-      setLoading(false);
-    }, 1000);
-    return () => clearTimeout(timer);
-  }, [selectedMarket]);
+    let mounted = true;
+    (async () => {
+      try {
+        setLoading(true);
+        const data = await propertyService.getMarketHeatmap(selectedMarket, mapView as any);
+        if (mounted) setHeatmap(data);
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    })();
+    return () => { mounted = false; };
+  }, [selectedMarket, mapView]);
   // Get the appropriate map image based on selected market and view
   const getMapImage = () => {
     if (selectedMarket.includes('Orlando')) {
@@ -22,38 +31,6 @@ export const PriceHeatMap = ({
       return mapView === 'price' ? 'https://source.unsplash.com/random/600x400/?map,florida' : mapView === 'growth' ? 'https://source.unsplash.com/random/600x400/?heatmap,florida' : 'https://source.unsplash.com/random/600x400/?map,florida';
     }
   };
-  // Neighborhood data for tooltips
-  const neighborhoods = [{
-    name: 'Downtown',
-    price: '$425,000',
-    growth: '+4.2%',
-    x: 50,
-    y: 50
-  }, {
-    name: 'Westside',
-    price: '$350,000',
-    growth: '+2.8%',
-    x: 30,
-    y: 40
-  }, {
-    name: 'Northside',
-    price: '$380,000',
-    growth: '+3.5%',
-    x: 50,
-    y: 30
-  }, {
-    name: 'Eastside',
-    price: '$410,000',
-    growth: '+3.9%',
-    x: 70,
-    y: 40
-  }, {
-    name: 'Southside',
-    price: '$395,000',
-    growth: '+3.2%',
-    x: 50,
-    y: 70
-  }];
   return <div className="h-full flex flex-col">
       <div className="mb-3 flex justify-between">
         <div className="flex">
@@ -96,19 +73,20 @@ export const PriceHeatMap = ({
               </button>
             </div>
             {/* Neighborhood markers */}
-            {neighborhoods.map((hood, index) => <div key={index} className="absolute w-3 h-3 bg-primary rounded-full cursor-pointer transform -translate-x-1/2 -translate-y-1/2 hover:scale-150 transition-transform" style={{
-          left: `${hood.x}%`,
-          top: `${hood.y}%`
-        }}>
-                <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-1 w-32 bg-white p-1.5 rounded-lg shadow-lg text-xs opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all pointer-events-none">
+            {heatmap?.neighborhoods?.map((hood, index) => <div key={index} className="absolute w-3 h-3 bg-primary rounded-full cursor-pointer transform -translate-x-1/2 -translate-y-1/2 hover:scale-150 transition-transform" style={{ left: `${hood.x}%`, top: `${hood.y}%` }}>
+                <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-1 w-36 bg-white p-1.5 rounded-lg shadow-lg text-xs opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all pointer-events-none">
                   <div className="font-medium">{hood.name}</div>
                   <div className="flex justify-between mt-1">
                     <span>Median:</span>
-                    <span>{hood.price}</span>
+                    <span>${hood.price.toLocaleString()}</span>
                   </div>
                   <div className="flex justify-between">
                     <span>Growth:</span>
-                    <span className="text-primary">{hood.growth}</span>
+                    <span className="text-primary">{hood.growth}%</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Opportunity:</span>
+                    <span className="text-emerald-600">{hood.opportunity}/100</span>
                   </div>
                 </div>
               </div>)}

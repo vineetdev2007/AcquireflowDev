@@ -1,5 +1,31 @@
-import React, { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef } from 'react';
+import type { MouseEvent as ReactMouseEvent } from 'react';
 import { Play, Pause, Edit, Copy, Trash2, Calendar, MapPin, Home, Users, ChevronRight, AlertTriangle, X } from 'lucide-react';
+type Campaign = {
+  id: string | number;
+  name: string;
+  status: string;
+  targetArea: string;
+  startDate: string | number | Date;
+  endDate: string | number | Date;
+  isHighPriority?: boolean;
+  propertyCount?: number;
+  loisSent?: number;
+  progress: number;
+  responseRate: string;
+  propertyTypes?: string[];
+};
+
+type CampaignCardProps = {
+  campaign: Campaign;
+  onView?: (campaign: Campaign) => void;
+  onPause?: (campaignId: string | number) => void;
+  onPlay?: (campaignId: string | number) => void;
+  onEdit?: (campaignId: string | number) => void;
+  onCopy?: (campaignId: string | number) => void;
+  onDelete?: (campaignId: string | number) => void;
+};
+
 export const CampaignCard = ({
   campaign,
   onView,
@@ -8,13 +34,13 @@ export const CampaignCard = ({
   onEdit,
   onCopy,
   onDelete
-}) => {
-  const cardRef = useRef(null);
+}: CampaignCardProps) => {
+  const cardRef = useRef<HTMLDivElement | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   useEffect(() => {
     const card = cardRef.current;
     if (!card) return;
-    const handleMouseMove = e => {
+    const handleMouseMove = (e: MouseEvent) => {
       const rect = card.getBoundingClientRect();
       const x = e.clientX - rect.left - rect.width / 2;
       const y = e.clientY - rect.top - rect.height / 2;
@@ -34,7 +60,7 @@ export const CampaignCard = ({
       card.removeEventListener('mouseleave', handleMouseLeave);
     };
   }, []);
-  const getStatusColor = status => {
+  const getStatusColor = (status: string) => {
     switch (status) {
       case 'running':
         return 'bg-primary';
@@ -46,7 +72,7 @@ export const CampaignCard = ({
         return 'bg-gray-400';
     }
   };
-  const getStatusText = status => {
+  const getStatusText = (status: string) => {
     switch (status) {
       case 'running':
         return 'Running';
@@ -58,7 +84,7 @@ export const CampaignCard = ({
         return 'Unknown';
     }
   };
-  const formatDate = date => {
+  const formatDate = (date: string | number | Date) => {
     return new Date(date).toLocaleDateString('en-US', {
       month: 'short',
       day: 'numeric',
@@ -66,7 +92,7 @@ export const CampaignCard = ({
     });
   };
   // Handle button clicks with propagation stopped
-  const handlePausePlay = e => {
+  const handlePausePlay = (e: ReactMouseEvent<HTMLButtonElement>) => {
     e.stopPropagation();
     if (campaign.status === 'running') {
       onPause && onPause(campaign.id);
@@ -74,26 +100,30 @@ export const CampaignCard = ({
       onPlay && onPlay(campaign.id);
     }
   };
-  const handleEdit = e => {
+  const handleEdit = (e: ReactMouseEvent<HTMLButtonElement>) => {
     e.stopPropagation();
     onEdit && onEdit(campaign.id);
   };
-  const handleCopy = e => {
+  const handleCopy = (e: ReactMouseEvent<HTMLButtonElement>) => {
     e.stopPropagation();
     onCopy && onCopy(campaign.id);
   };
-  const handleDelete = e => {
+  const handleDelete = (e: ReactMouseEvent<HTMLButtonElement>) => {
     e.stopPropagation();
     setShowDeleteConfirm(true);
   };
-  const confirmDelete = e => {
+  const confirmDelete = (e?: ReactMouseEvent<HTMLElement>) => {
     if (e) e.stopPropagation();
     setShowDeleteConfirm(false);
     onDelete && onDelete(campaign.id);
   };
-  const cancelDelete = e => {
+  const cancelDelete = (e?: ReactMouseEvent<HTMLElement>) => {
     if (e) e.stopPropagation();
     setShowDeleteConfirm(false);
+  };
+  const handleViewDetailsClick = (e: ReactMouseEvent<HTMLButtonElement>) => {
+    e.stopPropagation();
+    onView && onView(campaign);
   };
   return <div ref={cardRef} className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden card-3d transition-all hover:shadow-md relative" style={{
     transformStyle: 'preserve-3d'
@@ -133,13 +163,13 @@ export const CampaignCard = ({
           <div className="flex items-center">
             <Home size={14} className="mr-1 text-gray-500" />
             <span className="text-sm font-medium">
-              {campaign.propertyCount.toLocaleString()} Properties
+              {(campaign?.propertyCount ?? 0).toLocaleString()} Properties
             </span>
           </div>
           <div className="flex items-center">
             <Users size={14} className="mr-1 text-gray-500" />
             <span className="text-sm font-medium">
-              {campaign.loisSent} LOIs Sent
+              {(campaign.loisSent ?? 0)} LOIs Sent
             </span>
           </div>
         </div>
@@ -171,7 +201,7 @@ export const CampaignCard = ({
               <span className="bg-gray-100 px-2 py-0.5 rounded-full mr-1">
                 {getStatusText(campaign.status)}
               </span>
-              {campaign.propertyTypes.map((type, index) => <span key={index} className="bg-gray-100 px-2 py-0.5 rounded-full mr-1">
+              {(campaign.propertyTypes || []).map((type, index) => <span key={index} className="bg-gray-100 px-2 py-0.5 rounded-full mr-1">
                   {type}
                 </span>)}
             </div>
@@ -197,10 +227,7 @@ export const CampaignCard = ({
             <Trash2 size={16} />
           </button>
         </div>
-        <button className="flex items-center text-sm font-medium text-primary hover:text-primary-dark transition-all" onClick={e => {
-        e.stopPropagation();
-        onView && onView(campaign);
-      }}>
+        <button className="flex items-center text-sm font-medium text-primary hover:text-primary-dark transition-all" onClick={handleViewDetailsClick}>
           View Details
           <ChevronRight size={16} className="ml-1" />
         </button>
@@ -213,7 +240,7 @@ export const CampaignCard = ({
 
       {/* Delete Confirmation Modal */}
       {showDeleteConfirm && <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onClick={cancelDelete}>
-          <div className="bg-white rounded-xl shadow-lg p-6 max-w-md mx-4 animate-float" onClick={e => e.stopPropagation()}>
+          <div className="bg-white rounded-xl shadow-lg p-6 max-w-md mx-4 animate-float" onClick={(e: ReactMouseEvent<HTMLDivElement>) => e.stopPropagation()}>
             <div className="flex items-start mb-4">
               <div className="bg-red-100 p-2 rounded-full mr-4">
                 <AlertTriangle size={24} className="text-secondary" />

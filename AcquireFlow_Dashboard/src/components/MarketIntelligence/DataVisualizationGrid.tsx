@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { MarketTrendsChart } from './Charts/MarketTrendsChart';
 import { PriceHeatMap } from './Charts/PriceHeatMap';
 import { InventoryLevelsChart } from './Charts/InventoryLevelsChart';
@@ -7,10 +7,25 @@ import { AgentActivityChart } from './Charts/AgentActivityChart';
 import { SeasonalPatternsChart } from './Charts/SeasonalPatternsChart';
 import { TopInvestmentCities } from './Charts/TopInvestmentCities';
 import { ArrowUpRight, Download, RefreshCcw, Info } from 'lucide-react';
+import { propertyService, type OpportunitySummary } from '../../services/propertyService';
 export const DataVisualizationGrid = ({
   selectedMarket,
-  timeRange
+  timeRange,
+  onCompare
 }) => {
+  const [opp, setOpp] = useState<OpportunitySummary | null>(null);
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const data = await propertyService.getOpportunitySummary(selectedMarket);
+        if (mounted) setOpp(data);
+      } catch {
+        if (mounted) setOpp(null);
+      }
+    })();
+    return () => { mounted = false; };
+  }, [selectedMarket]);
   const handleRefresh = chartName => {
     console.log(`Refreshing ${chartName} chart...`);
     // In a real app, this would trigger a data refresh
@@ -41,7 +56,7 @@ export const DataVisualizationGrid = ({
   return <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
       {/* Top Investment Cities */}
       <div className="bg-white rounded-xl p-4 border border-gray-200 shadow-sm col-span-1 lg:col-span-3">
-        <TopInvestmentCities selectedMarket={selectedMarket} />
+        <TopInvestmentCities selectedMarket={selectedMarket} onCompare={onCompare} />
       </div>
       {/* Market Trends Chart */}
       <div className="bg-white rounded-xl p-4 border border-gray-200 shadow-sm col-span-1 lg:col-span-2">
@@ -92,18 +107,18 @@ export const DataVisualizationGrid = ({
             Investment Opportunity Alert
           </h3>
           <p className="text-white text-opacity-90 mb-4">
-            Our AI has identified 12 new high-potential investment opportunities
+            Our AI has identified {opp?.count ?? 12} new high-potential investment opportunities
             in {selectedMarket} matching your criteria.
           </p>
           <div className="flex flex-wrap gap-3">
             <div className="bg-white bg-opacity-20 px-3 py-1.5 rounded-lg text-sm">
-              Average Cap Rate: 7.2%
+              Average Cap Rate: {opp ? `${opp.avgCapRate}%` : '—'}
             </div>
             <div className="bg-white bg-opacity-20 px-3 py-1.5 rounded-lg text-sm">
-              Median Price: $320K
+              Median Price: ${opp ? Math.round(opp.medianPrice/1000) + 'K' : '—'}
             </div>
             <div className="bg-white bg-opacity-20 px-3 py-1.5 rounded-lg text-sm">
-              Projected ROI: 18.5%
+              Projected ROI: {opp ? `${opp.projectedRoi}%` : '—'}
             </div>
           </div>
         </div>

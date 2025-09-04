@@ -4,12 +4,14 @@ import { propertyService, type LeaderboardItem } from '../../../services/propert
 
 interface TopInvestmentCitiesProps {
   selectedMarket: string;
+  onCompare?: (cities: string[]) => void;
 }
 
-export const TopInvestmentCities: React.FC<TopInvestmentCitiesProps> = ({ selectedMarket }) => {
+export const TopInvestmentCities: React.FC<TopInvestmentCitiesProps> = ({ selectedMarket, onCompare }) => {
   const [items, setItems] = useState<LeaderboardItem[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+  const [isExporting, setIsExporting] = useState<boolean>(false);
 
   useEffect(() => {
     let mounted = true;
@@ -60,6 +62,59 @@ export const TopInvestmentCities: React.FC<TopInvestmentCitiesProps> = ({ select
       inWatchlist: false,
     }));
   }, [items, selectedMarket]);
+
+  const toCsv = (rows: (string | number)[][]): string => {
+    const escapeCell = (value: string | number) => {
+      const str = String(value ?? '');
+      if (/[",\n]/.test(str)) return '"' + str.replace(/"/g, '""') + '"';
+      return str;
+    };
+    return rows.map(r => r.map(escapeCell).join(',')).join('\n');
+  };
+
+  const download = (filename: string, content: string, mime: string) => {
+    const blob = new Blob([content], { type: mime + ';charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleExport = (format: 'csv' | 'json' = 'csv') => {
+    try {
+      setIsExporting(true);
+      const safeMarket = selectedMarket.replace(/[^a-z0-9]+/gi, '-').toLowerCase();
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      if (format === 'json') {
+        const payload = { meta: { exportedAt: new Date().toISOString(), selectedMarket }, items };
+        download(`top-cities-${safeMarket}-${timestamp}.json`, JSON.stringify(payload, null, 2), 'application/json');
+        return;
+      }
+      const headers = ['Rank', 'City', 'State', 'County', 'Investment Score', 'Price Growth %', 'Cap Rate %', 'Job Growth %', 'Affordability'];
+      const rows: (string | number)[][] = [headers];
+      items.forEach((it, idx) => {
+        rows.push([
+          it.rank ?? idx + 1,
+          it.city,
+          it.state,
+          it.county ?? '',
+          it.investmentScore,
+          it.priceGrowth,
+          it.capRate,
+          it.jobGrowth,
+          it.affordability,
+        ]);
+      });
+      const csv = toCsv(rows);
+      download(`top-cities-${safeMarket}-${timestamp}.csv`, csv, 'text/csv');
+    } finally {
+      setIsExporting(false);
+    }
+  };
 
   return <div className="bg-white rounded-xl p-4 border border-gray-200 shadow-sm">
       <div className="flex justify-between items-start mb-4">
@@ -161,10 +216,18 @@ export const TopInvestmentCities: React.FC<TopInvestmentCitiesProps> = ({ select
       <div className="mt-4 pt-3 border-t border-gray-100 flex justify-between items-center">
         <div className="text-xs text-gray-500">Data updated: {new Date().toLocaleDateString()}</div>
         <div className="flex space-x-2">
-          <button className="px-3 py-1.5 text-xs bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors">
-            Export Data
+          <button className="px-3 py-1.5 text-xs bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors disabled:opacity-60" onClick={() => handleExport('csv')} disabled={loading || items.length === 0 || isExporting} title="Export leaderboard as CSV">
+            {isExporting ? 'Exporting…' : 'Export Data'}
           </button>
-          <button className="px-3 py-1.5 text-xs bg-primary text-white rounded-lg hover:bg-primary-dark transition-colors flex items-center">
+          <button className="px-3 py-1.5 text-xs bg-primary text-white rounded-lg hover:bg-primary-dark transition-colors flex items-center disabled:opacity-60" onClick={() => {
+            if (loading || items.length === 0) return;
+            const normalize = (s: string) => s.trim().replace(/\s+/g, ' ');
+            const sorted = [...items].sort((a, b) => (a.rank ?? 999) - (b.rank ?? 999));
+            const top = sorted.slice(0, 3).map(it => `${it.city}, ${it.state}`);
+            const withSelected = [selectedMarket, ...top].map(normalize);
+            const deduped = Array.from(new Set(withSelected));
+            onCompare && onCompare(deduped);
+          }} disabled={loading || items.length === 0}>
             <BarChart2 size={12} className="mr-1" />
             Compare Cities
           </button>
