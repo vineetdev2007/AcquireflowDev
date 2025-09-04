@@ -59,7 +59,7 @@ export const DataVisualizationGrid = ({
         <TopInvestmentCities selectedMarket={selectedMarket} onCompare={onCompare} />
       </div>
       {/* Market Trends Chart */}
-      <div className="bg-white rounded-xl p-4 border border-gray-200 shadow-sm col-span-1 lg:col-span-2">
+      <div className="bg-white rounded-xl p-4 border border-gray-200 shadow-sm overflow-hidden col-span-1 lg:col-span-2">
         {renderChartHeader('Market Trends', 'Interactive price trends over time with key market events.')}
         <div className="h-72">
           <MarketTrendsChart selectedMarket={selectedMarket} timeRange={timeRange} />

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Navigate } from 'react-router-dom';
 import { useAppStore, selectAuth } from '../store';
 
@@ -8,7 +8,34 @@ type Props = {
 
 export const ProtectedRoute: React.FC<Props> = ({ children }) => {
   const auth = useAppStore(selectAuth);
-  if (auth.isLoading) {
+  const [hydrated, setHydrated] = useState(false);
+  useEffect(() => {
+    let timer: any;
+    // @ts-ignore
+    const unsub = useAppStore.persist?.onFinishHydration?.(() => {
+      setHydrated(true);
+      if (timer) clearTimeout(timer);
+    });
+    // Fallback in case onFinishHydration is unavailable in this build
+    timer = setTimeout(() => setHydrated(true), 700);
+    // @ts-ignore
+    if (useAppStore.persist?.hasHydrated?.()) {
+      setHydrated(true);
+      if (timer) clearTimeout(timer);
+    }
+    return () => {
+      if (typeof unsub === 'function') unsub();
+      if (timer) clearTimeout(timer);
+    };
+  }, []);
+  // Check persisted auth directly to avoid premature redirects during hydration
+  let persistedAuth: any = null;
+  try {
+    const raw = localStorage.getItem('acquireflow-app-store');
+    if (raw) persistedAuth = JSON.parse(raw)?.state?.auth || JSON.parse(raw)?.auth || null;
+  } catch {}
+  const hasPersistedSession = !!(persistedAuth && (persistedAuth.isAuthenticated || persistedAuth.accessToken));
+  if (!hydrated || auth.isLoading || (!auth.isAuthenticated && hasPersistedSession)) {
     return <div className="flex h-screen w-full items-center justify-center bg-gray-50">
       <div className="text-center">
         <svg className="animate-spin h-12 w-12 mx-auto text-primary" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">

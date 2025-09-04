@@ -167,39 +167,24 @@ export const AuthProvider: React.FC<{
                   setIsLoading(false);
                   return;
                 } else {
-                  console.log('❌ Token refresh failed, clearing stored data');
-                  // Clear invalid data
-                  localStorage.removeItem('acquireflow-access-token');
-                  localStorage.removeItem('acquireflow-refresh-token');
-                  localStorage.removeItem('acquireflow-user-data');
+                  console.log('❌ Token refresh failed (non-OK). Preserving stored tokens for now (possible network/backend warm-up)');
+                  // Preserve tokens to avoid logging user out on transient errors
                 }
               } catch (refreshError) {
                 console.error('Error refreshing token:', refreshError);
-                // Clear invalid data
-                localStorage.removeItem('acquireflow-access-token');
-                localStorage.removeItem('acquireflow-refresh-token');
-                localStorage.removeItem('acquireflow-user-data');
+                // Preserve tokens on network errors
               }
             } else {
-              console.log('❌ Token is invalid, clearing stored data');
-              // Clear invalid data
-              localStorage.removeItem('acquireflow-access-token');
-              localStorage.removeItem('acquireflow-refresh-token');
-              localStorage.removeItem('acquireflow-user-data');
+              console.log('⚠️ Token validation failed (status:', response.status, '). Preserving tokens this refresh');
+              // Do not clear tokens here; allow next logic to consider store state or Firebase
             }
           } catch (apiError) {
             console.error('Error validating token:', apiError);
-            // Clear invalid data
-            localStorage.removeItem('acquireflow-access-token');
-            localStorage.removeItem('acquireflow-refresh-token');
-            localStorage.removeItem('acquireflow-user-data');
+            // Preserve tokens on network errors (backend unavailable/cold start)
           }
         } catch (error) {
           console.error('Error restoring session from localStorage:', error);
-          // Clear invalid data
-          localStorage.removeItem('acquireflow-access-token');
-          localStorage.removeItem('acquireflow-refresh-token');
-          localStorage.removeItem('acquireflow-user-data');
+          // Preserve tokens; parsing error will fall through to next checks
         }
       }
       
@@ -228,7 +213,7 @@ export const AuthProvider: React.FC<{
       }
       
       console.log('❌ No valid tokens found, checking Firebase auth state');
-      // If no valid tokens, check Firebase auth state
+      // If no valid tokens detected by now, check Firebase auth state
       authStore.auth.setLoading(true);
       const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
         if (firebaseUser) {
@@ -240,8 +225,28 @@ export const AuthProvider: React.FC<{
           setUser(appUser);
           authStore.auth.loginSuccess({ token: 'firebase-session', user: { id: appUser.id, email: appUser.email, name: appUser.name } });
         } else {
-          setUser(null);
-          authStore.auth.logout();
+          // Before logging out, if we still have stored tokens+user, restore optimistically
+          const storedAccessToken2 = localStorage.getItem('acquireflow-access-token');
+          const storedUserData2 = localStorage.getItem('acquireflow-user-data');
+          if (storedAccessToken2 && storedUserData2) {
+            try {
+              const userData2 = JSON.parse(storedUserData2);
+              const restoredUser2 = {
+                id: userData2.id,
+                name: `${userData2.firstName} ${userData2.lastName}`.trim() || userData2.email,
+                email: userData2.email
+              };
+              authStore.auth.setTokens({ accessToken: storedAccessToken2, refreshToken: localStorage.getItem('acquireflow-refresh-token'), expiresAt: Date.now() + 24*60*60*1000 });
+              authStore.auth.loginSuccess({ token: storedAccessToken2, user: restoredUser2 });
+              setUser(restoredUser2);
+            } catch {
+              setUser(null);
+              authStore.auth.logout();
+            }
+          } else {
+            setUser(null);
+            authStore.auth.logout();
+          }
         }
         setIsLoading(false);
         authStore.auth.setLoading(false);

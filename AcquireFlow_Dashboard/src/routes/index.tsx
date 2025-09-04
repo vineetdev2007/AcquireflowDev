@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { AuthPage } from '../components/Auth/AuthPage';
 import { Dashboard } from '../components/Dashboard/Dashboard';
@@ -25,8 +25,11 @@ import { Inbox } from '../components/Inbox/Inbox';
 export const AppRoutes: React.FC = () => {
   // Initialize currentPage from localStorage or default to 'Dashboard'
   const [currentPage, setCurrentPage] = useState(() => {
+    const urlHash = typeof window !== 'undefined' ? window.location.hash : '';
+    const hashMatch = urlHash?.match(/page=([^&]+)/);
+    const pageFromHash = hashMatch ? decodeURIComponent(hashMatch[1]) : null;
     const savedPage = localStorage.getItem('acquireflow-current-page');
-    return savedPage || 'Dashboard';
+    return pageFromHash || savedPage || 'Dashboard';
   });
   
   // Update localStorage whenever currentPage changes
@@ -34,6 +37,15 @@ export const AppRoutes: React.FC = () => {
     setCurrentPage(page);
     localStorage.setItem('acquireflow-current-page', page);
   };
+  // Keep URL hash in sync so refreshes preserve the current page reliably
+  useEffect(() => {
+    const encoded = encodeURIComponent(currentPage);
+    const base = window.location.pathname + window.location.search;
+    const newHash = `#page=${encoded}`;
+    if (window.location.hash !== newHash) {
+      window.history.replaceState(null, '', base + newHash);
+    }
+  }, [currentPage]);
   const renderPage = () => {
     switch (currentPage) {
       case 'Dashboard':

@@ -105,12 +105,12 @@ export const MarketTrendsChart = ({
           </button>
         </div>
       </div>
-      <ResponsiveContainer width="100%" height="100%">
+      <ResponsiveContainer width="100%" height={240}>
         <LineChart data={data} margin={{
-        top: 5,
-        right: 30,
-        left: 20,
-        bottom: 5
+        top: 0,
+        right: 8,
+        left: 0,
+        bottom: 0
       }}>
           <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
           <XAxis dataKey="date" tick={{

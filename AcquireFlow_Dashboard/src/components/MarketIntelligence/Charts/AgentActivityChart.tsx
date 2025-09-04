@@ -70,8 +70,8 @@ export const AgentActivityChart = ({
     volume: '$14.8M'
   }];
   return <div className="h-full flex flex-col">
-      <div className="flex-1">
-        <ResponsiveContainer width="100%" height="100%">
+      <div className="flex-1 overflow-hidden">
+        <ResponsiveContainer width="100%" height={220}>
           <PieChart>
             <Pie data={data?.breakdown || []} cx="50%" cy="50%" innerRadius={60} outerRadius={80} paddingAngle={2} dataKey="value" onMouseEnter={onPieEnter} onMouseLeave={onPieLeave}>
               {(data?.breakdown || []).map((entry, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} stroke={activeIndex === index ? '#fff' : 'none'} strokeWidth={2} style={{
@@ -82,7 +82,7 @@ export const AgentActivityChart = ({
             }} />)}
             </Pie>
             <Tooltip content={<CustomTooltip />} />
-            <Legend layout="vertical" verticalAlign="middle" align="right" formatter={value => <span className="text-xs">{value}</span>} />
+            <Legend layout="vertical" verticalAlign="middle" align="right" wrapperStyle={{ paddingRight: 8 }} formatter={value => <span className="text-xs">{value}</span>} />
           </PieChart>
         </ResponsiveContainer>
       </div>

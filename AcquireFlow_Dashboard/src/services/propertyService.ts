@@ -233,6 +233,8 @@ export interface OpportunitySummary {
 class PropertyService {
   private baseUrl: string;
   private apiKey: string;
+  // Deduplicate identical in-flight requests and apply retry/backoff on 429
+  private inflightRequests: Map<string, Promise<any>> = new Map();
 
   constructor() {
     // Use your backend API instead of direct external API
@@ -242,30 +244,58 @@ class PropertyService {
 
   private async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
     const url = `${this.baseUrl}${endpoint}`;
-    
-    try {
-      const response = await fetch(url, {
-        ...options,
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          ...options.headers,
-        },
-      });
+    const method = (options.method || 'GET').toUpperCase();
+    const bodyKey = options.body ? (typeof options.body === 'string' ? options.body : JSON.stringify(options.body)) : '';
+    const cacheKey = `${method}:${url}:${bodyKey}`;
 
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.message || `HTTP error! status: ${response.status}`);
-      }
-
-      return response.json();
-    } catch (error) {
-      // If CORS error, provide a more helpful message
-      if (error instanceof TypeError && error.message.includes('fetch')) {
-        throw new Error('CORS_ERROR: Unable to connect to real estate API. Using mock data instead.');
-      }
-      throw error;
+    if (this.inflightRequests.has(cacheKey)) {
+      return this.inflightRequests.get(cacheKey) as Promise<T>;
     }
+
+    const doFetch = async (attempt: number): Promise<T> => {
+      try {
+        const response = await fetch(url, {
+          ...options,
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+            ...options.headers,
+          },
+        });
+
+        if (!response.ok) {
+          // 429/5xx retry with backoff
+          if ((response.status === 429 || response.status === 503 || response.status === 502 || response.status === 500) && attempt < 3) {
+            const retryAfterHeader = response.headers.get('Retry-After');
+            const retryAfter = retryAfterHeader ? parseInt(retryAfterHeader, 10) * 1000 : 0;
+            const backoff = retryAfter || (300 * Math.pow(2, attempt)) + Math.floor(Math.random() * 200);
+            await new Promise(res => setTimeout(res, backoff));
+            return doFetch(attempt + 1);
+          }
+          const errorText = await response.text().catch(() => '');
+          throw new Error(errorText || `HTTP error! status: ${response.status}`);
+        }
+
+        return response.json();
+      } catch (error: any) {
+        if (attempt < 2 && (error?.message?.includes('NetworkError') || error?.message?.includes('Failed to fetch'))) {
+          await new Promise(res => setTimeout(res, 300 * Math.pow(2, attempt)));
+          return doFetch(attempt + 1);
+        }
+        // If CORS error, provide a more helpful message
+        if (error instanceof TypeError && error.message.includes('fetch')) {
+          throw new Error('CORS_ERROR: Unable to connect to real estate API. Using mock data instead.');
+        }
+        throw error;
+      }
+    };
+
+    const promise = doFetch(0).finally(() => {
+      // Clear in-flight promise after completion
+      this.inflightRequests.delete(cacheKey);
+    });
+    this.inflightRequests.set(cacheKey, promise);
+    return promise;
   }
 
   /**
