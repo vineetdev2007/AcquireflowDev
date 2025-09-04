@@ -188,12 +188,16 @@ export interface HeatmapNeighborhood {
   price: number;
   growth: number; // percent
   opportunity: number; // 0-100
+  lat?: number;
+  lng?: number;
 }
 
 export interface MarketHeatmapResponse {
   city: string;
   state: string;
   view: 'price' | 'growth' | 'opportunity';
+  centerLat?: number;
+  centerLng?: number;
   neighborhoods: HeatmapNeighborhood[];
 }
 

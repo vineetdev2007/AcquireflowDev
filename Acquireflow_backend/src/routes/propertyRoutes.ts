@@ -353,6 +353,22 @@ router.get('/market-heatmap', async (req: Request, res: Response) => {
     const priceChangeMoM = kpi?.priceChangeMoM ?? 0.5;
     const opportunity = kpi?.opportunityScore ?? 60;
 
+    // Basic city center lat/lng (approximate). Fallback: Orlando
+    const cityCenters: Record<string, { lat: number; lng: number }> = {
+      'Orlando, FL': { lat: 28.538336, lng: -81.379234 },
+      'Miami, FL': { lat: 25.761681, lng: -80.191788 },
+      'Tampa, FL': { lat: 27.950575, lng: -82.457178 },
+      'Jacksonville, FL': { lat: 30.332184, lng: -81.655651 },
+      'Fort Lauderdale, FL': { lat: 26.122438, lng: -80.137314 },
+      'West Palm Beach, FL': { lat: 26.715342, lng: -80.053375 },
+      'Naples, FL': { lat: 26.142036, lng: -81.794807 },
+      'Sarasota, FL': { lat: 27.336435, lng: -82.530653 },
+      'Fort Myers, FL': { lat: 26.640628, lng: -81.872308 },
+      'Daytona Beach, FL': { lat: 29.210815, lng: -81.022833 },
+    };
+    const centerKey = `${city}, ${state}`;
+    const center = cityCenters[centerKey] || cityCenters['Orlando, FL'];
+
     // Deterministic pseudo-random based on city/state for stable results
     const seedStr = `${city}-${state}`;
     let seed = 0;
@@ -367,17 +383,26 @@ router.get('/market-heatmap', async (req: Request, res: Response) => {
       const pMult = 0.85 + rand() * 0.35; // 0.85 - 1.20
       const growth = (priceChangeMoM + (rand() * 0.8 - 0.2)).toFixed(2); // around MoM +/-
       const opp = Math.max(0, Math.min(100, Math.round(opportunity + (rand() * 20 - 10))));
+      // create small geographic offsets (≈ ±0.08 deg)
+      const baseLat = center ? center.lat : 28.538336;
+      const baseLng = center ? center.lng : -81.379234;
+      const lat = baseLat + (rand() - 0.5) * 0.16;
+      const lng = baseLng + (rand() - 0.5) * 0.16;
       return {
         name,
-        x: Math.round(10 + rand() * 80),
+        x: Math.round(10 + rand() * 80), // retained for legacy fallback
         y: Math.round(10 + rand() * 80),
         price: Math.round(medianPrice * pMult),
         growth: parseFloat(growth),
         opportunity: opp,
+        lat,
+        lng,
       };
     });
 
-    return res.json({ success: true, data: { city, state, view, neighborhoods } });
+    const outCenterLat = center ? center.lat : 28.538336;
+    const outCenterLng = center ? center.lng : -81.379234;
+    return res.json({ success: true, data: { city, state, view, centerLat: outCenterLat, centerLng: outCenterLng, neighborhoods } });
   } catch (error: any) {
     const message = error?.message || 'Failed to compute market heatmap';
     return res.status(500).json({ success: false, message });

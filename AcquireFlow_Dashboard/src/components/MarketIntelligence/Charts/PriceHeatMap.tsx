@@ -1,6 +1,9 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Map, ChevronDown, ZoomIn, ZoomOut, LocateFixed } from 'lucide-react';
 import { propertyService, type MarketHeatmapResponse } from '../../../services/propertyService';
+import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
 export const PriceHeatMap = ({
   selectedMarket
 }) => {
@@ -31,6 +34,13 @@ export const PriceHeatMap = ({
       return mapView === 'price' ? 'https://source.unsplash.com/random/600x400/?map,florida' : mapView === 'growth' ? 'https://source.unsplash.com/random/600x400/?heatmap,florida' : 'https://source.unsplash.com/random/600x400/?map,florida';
     }
   };
+  // Compute map center from markers
+  const center = useMemo<[number, number]>(() => {
+    if (heatmap?.centerLat && heatmap?.centerLng) {
+      return [heatmap.centerLat, heatmap.centerLng];
+    }
+    return [28.538336, -81.379234];
+  }, [heatmap?.centerLat, heatmap?.centerLng]);
   return <div className="h-full flex flex-col">
       <div className="mb-3 flex justify-between">
         <div className="flex">
@@ -59,7 +69,27 @@ export const PriceHeatMap = ({
               <div className="h-4 w-24 bg-gray-200 rounded"></div>
             </div>
           </div> : <>
-            <img src={getMapImage()} alt={`${selectedMarket} ${mapView} map`} className="w-full h-full object-cover" />
+            <div className="w-full h-full">
+              <MapContainer style={{ height: '100%', width: '100%', minHeight: '260px' }} center={center} zoom={11} scrollWheelZoom>
+                <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors' />
+                {(heatmap?.neighborhoods || []).map((n, idx) => (
+                  <Marker key={idx} position={[n.lat ?? center[0] + (n.y-50)/500, n.lng ?? center[1] + (n.x-50)/500]} icon={L.divIcon({
+                    html: `<div style=\"background:#10b981;color:#fff;border-radius:9999px;width:10px;height:10px\"></div>`,
+                    className: 'heatmap-marker',
+                    iconSize: [10, 10],
+                  })}>
+                    <Popup>
+                      <div className="text-sm">
+                        <div className="font-medium">{n.name}</div>
+                        <div>Median: ${n.price.toLocaleString()}</div>
+                        <div>Growth: {n.growth}%</div>
+                        <div>Opportunity: {n.opportunity}/100</div>
+                      </div>
+                    </Popup>
+                  </Marker>
+                ))}
+              </MapContainer>
+            </div>
             {/* Map controls */}
             <div className="absolute top-2 right-2 flex flex-col space-y-1">
               <button className="w-8 h-8 bg-white rounded-lg shadow-md flex items-center justify-center text-gray-600 hover:bg-gray-50">
@@ -72,24 +102,7 @@ export const PriceHeatMap = ({
                 <LocateFixed size={16} />
               </button>
             </div>
-            {/* Neighborhood markers */}
-            {heatmap?.neighborhoods?.map((hood, index) => <div key={index} className="absolute w-3 h-3 bg-primary rounded-full cursor-pointer transform -translate-x-1/2 -translate-y-1/2 hover:scale-150 transition-transform" style={{ left: `${hood.x}%`, top: `${hood.y}%` }}>
-                <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-1 w-36 bg-white p-1.5 rounded-lg shadow-lg text-xs opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all pointer-events-none">
-                  <div className="font-medium">{hood.name}</div>
-                  <div className="flex justify-between mt-1">
-                    <span>Median:</span>
-                    <span>${hood.price.toLocaleString()}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Growth:</span>
-                    <span className="text-primary">{hood.growth}%</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Opportunity:</span>
-                    <span className="text-emerald-600">{hood.opportunity}/100</span>
-                  </div>
-                </div>
-              </div>)}
+            {/* Removed legacy overlay dots; Leaflet markers now represent points */}
             {/* Legend */}
             <div className="absolute bottom-2 left-2 bg-white bg-opacity-90 p-2 rounded-lg shadow-md text-xs">
               <div className="font-medium mb-1">
