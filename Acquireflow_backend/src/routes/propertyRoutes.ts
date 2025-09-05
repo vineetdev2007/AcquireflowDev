@@ -59,6 +59,9 @@ router.get('/search', async (req: Request, res: Response) => {
     
     // Add filters to search parameters
     const filters = req.query as PropertySearchFilters & { page?: string | number; size?: string | number };
+    // Parse a single 'locations' query value (supports City, ST or 2-letter state)
+    const locationsQuery = (req.query['locations'] as string | undefined)?.trim();
+    const parsedLocations: string[] = locationsQuery ? [locationsQuery] : [];
     
     if (filters.locations && Array.isArray(filters.locations)) {
       searchParams.append('locations', filters.locations.join(','));
@@ -141,8 +144,32 @@ router.get('/search', async (req: Request, res: Response) => {
     const requestBody: any = { size, resultIndex, mls_active: true };
     
     // Add filters to request body (convert from query params to body params)
-    if (filters.locations && Array.isArray(filters.locations)) {
-      requestBody.locations = filters.locations;
+    const allLocations = Array.isArray(filters.locations) ? filters.locations : parsedLocations;
+    if (allLocations && allLocations.length > 0) {
+      requestBody.locations = allLocations;
+      requestBody.states = allLocations.filter(l => typeof l === 'string' && /^[A-Za-z]{2}$/.test(String(l))).map(s => String(s).toUpperCase());
+      const cityState = allLocations
+        .map(l => String(l))
+        .map(s => {
+          const parts = s.split(',');
+          if (parts.length >= 2) {
+            const statePart = parts[parts.length - 1] ?? '';
+            const state = statePart.trim().toUpperCase();
+            const city = parts.slice(0, parts.length - 1).join(',').trim();
+            if (city && /^[A-Za-z]{2}$/.test(state) === false) {
+              return { city, state };
+            }
+            return { city, state };
+          }
+          return null;
+        })
+        .filter(Boolean);
+      (requestBody as any)._cityState = cityState; // internal marker for post-filtering
+      // Best-effort upstream hints
+      if (cityState.length === 1) {
+        requestBody.city = cityState[0]?.city;
+        requestBody.state = cityState[0]?.state;
+      }
     }
     if (filters.minPrice) requestBody.minPrice = filters.minPrice;
     if (filters.maxPrice) requestBody.maxPrice = filters.maxPrice;
@@ -188,12 +215,25 @@ router.get('/search', async (req: Request, res: Response) => {
     console.log('✅ External API response received:', response.status);
     console.log('📊 Data count:', response.data?.data?.length || 0);
 
+    // Post-filter by city/state if needed
+    let payload = response.data;
+    const statesFilter: string[] = requestBody.states || [];
+    const cityStateFilter: Array<{ city?: string; state?: string }> = (requestBody as any)._cityState || [];
+    const arr: any[] = Array.isArray(payload) ? payload : (payload?.data || []);
+    if (arr && (statesFilter.length > 0 || cityStateFilter.length > 0)) {
+      const statesSet = new Set(statesFilter);
+      const norm = (s: string) => String(s || '').trim().toLowerCase();
+      const filtered = arr.filter((item: any) => {
+        const st = String(item?.address?.state || item?.state || '').toUpperCase();
+        const ct = String(item?.address?.city || item?.city || '');
+        const stateMatch = statesSet.size > 0 ? statesSet.has(st) : false;
+        const cityStateMatch = cityStateFilter.some(cs => norm(cs.city || '') === norm(ct) && (cs.state ? cs.state.toUpperCase() === st : true));
+        return (statesSet.size > 0 && stateMatch) || (cityStateFilter.length > 0 && cityStateMatch);
+      });
+      payload = Array.isArray(payload) ? filtered : { ...payload, data: filtered };
+    }
     // Return the data to frontend
-    return res.json({
-      success: true,
-      data: response.data,
-      meta: { page, size, resultIndex }
-    });
+    return res.json({ success: true, data: payload, meta: { page, size, resultIndex } });
 
   } catch (error: any) {
     console.error('❌ Property search error:', error.message);
@@ -221,6 +261,46 @@ router.get('/search', async (req: Request, res: Response) => {
         message: 'Internal server error while processing property search'
       });
     }
+  }
+});
+
+// POST variant that accepts JSON body, mirroring upstream contract
+router.post('/search', async (req: Request, res: Response) => {
+  try {
+    const apiKey = process.env['REAL_ESTATE_API_KEY'];
+    if (!apiKey) return res.status(500).json({ success: false, message: 'Real Estate API key not configured' });
+
+    const b = req.body || {};
+    const page = Math.max(1, parseInt(String(b.page || '1'), 10));
+    const size = Math.max(1, Math.min(200, parseInt(String(b.size || '50'), 10)));
+    const resultIndex = (page - 1) * size;
+
+    const body: any = {
+      size,
+      resultIndex,
+      mls_active: b.mls_active !== undefined ? !!b.mls_active : true
+    };
+    if (b.state) body.state = String(b.state).toUpperCase();
+    if (b.city) body.city = String(b.city);
+    if (Array.isArray(b.states)) body.states = b.states.map((s: any) => String(s).toUpperCase());
+    if (Array.isArray(b.locations)) body.locations = b.locations;
+    if (b.property_type) body.property_type = String(b.property_type).toUpperCase();
+
+    const response = await axios.post('https://api.realestateapi.com/v2/PropertySearch', body, {
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'User-Agent': 'AcquireFlow/1.0'
+      },
+      timeout: 30000
+    });
+
+    return res.json({ success: true, data: response.data, meta: { page, size, resultIndex } });
+  } catch (error: any) {
+    if (error.response) {
+      return res.status(error.response.status).json({ success: false, message: error.response.data?.message || 'External API error', details: error.response.data });
+    }
+    return res.status(500).json({ success: false, message: error?.message || 'Search failed' });
   }
 });
 

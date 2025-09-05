@@ -407,6 +407,57 @@ class PropertyService {
   }
 
   /**
+   * POST variant to match upstream contract. Preferred for complex searches.
+   */
+  async searchPropertiesPost(
+    filters: PropertySearchFilters & { page?: number; size?: number; city?: string; state?: string; mls_active?: boolean; property_type?: string }
+  ): Promise<PropertySearchResponse> {
+    // Derive city/state from locations[] if not explicitly provided
+    let city = (filters as any).city as string | undefined;
+    let state = (filters as any).state as string | undefined;
+    const firstLocation = Array.isArray(filters.locations) && filters.locations.length ? String(filters.locations[0]) : undefined;
+    if (!city && !state && firstLocation) {
+      if (firstLocation.includes(',')) {
+        const parts = firstLocation.split(',');
+        city = parts.slice(0, parts.length - 1).join(',').trim();
+        state = parts[parts.length - 1].trim().toUpperCase();
+      } else if (/^[A-Za-z]{2}$/.test(firstLocation)) {
+        state = firstLocation.toUpperCase();
+      }
+    }
+
+    // Map our propertyTypes to upstream property_type when a single clear type is chosen
+    let propertyType = (filters as any).property_type as string | undefined;
+    if (!propertyType && Array.isArray(filters.propertyTypes) && filters.propertyTypes.length === 1) {
+      const t = filters.propertyTypes[0];
+      if (t === 'singleFamily') propertyType = 'SFR';
+      else if (t === 'multiFamily') propertyType = 'MFR';
+      else if (t === 'land') propertyType = 'LAND';
+      else if (t === 'commercial') propertyType = 'OTHER';
+    }
+
+    const body: any = {
+      page: (filters as any).page || 1,
+      size: (filters as any).size || 50,
+      mls_active: (filters as any).mls_active ?? true,
+      city,
+      state,
+      property_type: propertyType
+    };
+    // Remove undefined
+    Object.keys(body).forEach(k => body[k] === undefined && delete body[k]);
+    const result = await this.request<{ success: boolean; data: PropertySearchResponse }>(
+      `/properties/search`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      }
+    );
+    return result.data;
+  }
+
+  /**
    * Get featured properties (default search)
    */
    async getFeaturedProperties(page: number = 1, size: number = 50): Promise<PropertySearchResponse> {

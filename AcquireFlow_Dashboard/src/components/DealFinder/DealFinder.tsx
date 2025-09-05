@@ -30,6 +30,7 @@ export const DealFinder: React.FC = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [isAppending, setIsAppending] = useState(false);
   const [isFilteredResults, setIsFilteredResults] = useState(false);
+  const [lastAppliedFilters, setLastAppliedFilters] = useState<FilterState | null>(null);
   const [selectedProperty, setSelectedProperty] = useState<PropertyResult | null>(null);
   const [savedProperties, setSavedProperties] = useState<string[]>([]);
   const [viewMode, setViewMode] = useState<'grid' | 'map'>('grid');
@@ -39,30 +40,40 @@ export const DealFinder: React.FC = () => {
   const [investmentStrategy, setInvestmentStrategy] = useState<'wholesaling' | 'fixAndFlip' | 'buyAndHold' | 'shortTermRental' | 'custom'>('buyAndHold');
   const [error, setError] = useState<string | null>(null);
 
-  // Fetch initial properties when component mounts
+  // Initial fetch once
   useEffect(() => {
-    // If page is 1, replace results; otherwise, append
-    if (page === 1) {
-      fetchInitialProperties(1, pageSize);
-    } else {
-      const loadMore = async () => {
-        setIsAppending(true);
-        try {
+    fetchInitialProperties(1, pageSize);
+  }, []);
+
+  // Handle pagination appends (page > 1)
+  useEffect(() => {
+    if (page <= 1) return;
+    const loadMore = async () => {
+      setIsAppending(true);
+      try {
+        if (lastAppliedFilters) {
+          const response = await propertyService.searchPropertiesPost({ ...(lastAppliedFilters as any), page, size: pageSize });
+          if (response.data && response.data.length > 0) {
+            const transformed = response.data.map(transformPropertyData);
+            const withCoords = await ensureCoordinates(transformed);
+            setResults(prev => [...prev, ...withCoords]);
+          }
+        } else {
           const response = await propertyService.getFeaturedProperties(page, pageSize);
           if (response.data && response.data.length > 0) {
             const transformed = response.data.map(transformPropertyData);
             const withCoords = await ensureCoordinates(transformed);
             setResults(prev => [...prev, ...withCoords]);
           }
-        } catch (e) {
-          console.error(e);
-        } finally {
-          setIsAppending(false);
         }
-      };
-      loadMore();
-    }
-  }, [page, pageSize]);
+      } catch (e) {
+        console.error(e);
+      } finally {
+        setIsAppending(false);
+      }
+    };
+    loadMore();
+  }, [page, pageSize, lastAppliedFilters]);
 
   // Simple in-memory cache for geocoding results
   const geocodeCache = new Map<string, { lat: number; lng: number }>();
@@ -207,6 +218,8 @@ export const DealFinder: React.FC = () => {
     setError(null);
     setIsFilteredResults(true);
     setSelectedProperties([]); // Clear selections when applying filters
+    setLastAppliedFilters(filters);
+    setPage(1); // Reset to first page for new filter set
     
     // Update investment strategy based on filter selection if available
     if (filters.investmentStrategy) {
@@ -230,7 +243,7 @@ export const DealFinder: React.FC = () => {
         maxSqft: filters.maxSqft
       };
 
-      const response = await propertyService.searchProperties({ ...searchFilters, page, size: pageSize });
+      const response = await propertyService.searchPropertiesPost({ ...searchFilters, page: 1, size: pageSize });
       
       if (response.data && response.data.length > 0) {
         const transformedResults = response.data.map(transformPropertyData);

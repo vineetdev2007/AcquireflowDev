@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useFilters } from './FilterContext';
 import { ActiveFilters } from './ActiveFilters';
 import { FilterActions } from './FilterActions';
@@ -10,6 +10,58 @@ export const FilterSidebar: React.FC = () => {
     resetFilters,
     applyFilters
   } = useFilters();
+  const US_STATES: Array<{ abbr: string; name: string }> = useMemo(() => ([
+    { abbr: 'AL', name: 'Alabama' },
+    { abbr: 'AK', name: 'Alaska' },
+    { abbr: 'AZ', name: 'Arizona' },
+    { abbr: 'AR', name: 'Arkansas' },
+    { abbr: 'CA', name: 'California' },
+    { abbr: 'CO', name: 'Colorado' },
+    { abbr: 'CT', name: 'Connecticut' },
+    { abbr: 'DE', name: 'Delaware' },
+    { abbr: 'FL', name: 'Florida' },
+    { abbr: 'GA', name: 'Georgia' },
+    { abbr: 'HI', name: 'Hawaii' },
+    { abbr: 'ID', name: 'Idaho' },
+    { abbr: 'IL', name: 'Illinois' },
+    { abbr: 'IN', name: 'Indiana' },
+    { abbr: 'IA', name: 'Iowa' },
+    { abbr: 'KS', name: 'Kansas' },
+    { abbr: 'KY', name: 'Kentucky' },
+    { abbr: 'LA', name: 'Louisiana' },
+    { abbr: 'ME', name: 'Maine' },
+    { abbr: 'MD', name: 'Maryland' },
+    { abbr: 'MA', name: 'Massachusetts' },
+    { abbr: 'MI', name: 'Michigan' },
+    { abbr: 'MN', name: 'Minnesota' },
+    { abbr: 'MS', name: 'Mississippi' },
+    { abbr: 'MO', name: 'Missouri' },
+    { abbr: 'MT', name: 'Montana' },
+    { abbr: 'NE', name: 'Nebraska' },
+    { abbr: 'NV', name: 'Nevada' },
+    { abbr: 'NH', name: 'New Hampshire' },
+    { abbr: 'NJ', name: 'New Jersey' },
+    { abbr: 'NM', name: 'New Mexico' },
+    { abbr: 'NY', name: 'New York' },
+    { abbr: 'NC', name: 'North Carolina' },
+    { abbr: 'ND', name: 'North Dakota' },
+    { abbr: 'OH', name: 'Ohio' },
+    { abbr: 'OK', name: 'Oklahoma' },
+    { abbr: 'OR', name: 'Oregon' },
+    { abbr: 'PA', name: 'Pennsylvania' },
+    { abbr: 'RI', name: 'Rhode Island' },
+    { abbr: 'SC', name: 'South Carolina' },
+    { abbr: 'SD', name: 'South Dakota' },
+    { abbr: 'TN', name: 'Tennessee' },
+    { abbr: 'TX', name: 'Texas' },
+    { abbr: 'UT', name: 'Utah' },
+    { abbr: 'VT', name: 'Vermont' },
+    { abbr: 'VA', name: 'Virginia' },
+    { abbr: 'WA', name: 'Washington' },
+    { abbr: 'WV', name: 'West Virginia' },
+    { abbr: 'WI', name: 'Wisconsin' },
+    { abbr: 'WY', name: 'Wyoming' }
+  ]), []);
   const [expandedSections, setExpandedSections] = useState({
     location: true,
     propertyType: true,
@@ -25,18 +77,8 @@ export const FilterSidebar: React.FC = () => {
       [section]: !prev[section]
     }));
   };
-  const handleLocationChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = e.target.value;
-    if (value.trim() === '') {
-      updateFilters({
-        locations: []
-      });
-    } else {
-      updateFilters({
-        locations: [value]
-      });
-    }
-  };
+  // Location search query (doesn't mutate filters until selection)
+  const [locationQuery, setLocationQuery] = useState('');
   const handlePropertyTypeChange = (type: string) => {
     const currentTypes = [...filters.propertyTypes];
     const index = currentTypes.indexOf(type);
@@ -50,6 +92,24 @@ export const FilterSidebar: React.FC = () => {
         propertyTypes: currentTypes
       });
     }
+  };
+  const handleToggleState = (abbr: string) => {
+    const set = new Set(filters.locations);
+    if (set.has(abbr)) set.delete(abbr); else set.add(abbr);
+    updateFilters({ locations: Array.from(set) });
+  };
+  const TOP_CITIES = useMemo(() => [
+    'Miami, FL',
+    'Orlando, FL',
+    'Tampa, FL',
+    'Jacksonville, FL',
+    'New York, NY',
+    'Los Angeles, CA'
+  ], []);
+  const toggleCity = (city: string) => {
+    const set = new Set(filters.locations);
+    if (set.has(city)) set.delete(city); else set.add(city);
+    updateFilters({ locations: Array.from(set) });
   };
   const handleMotivationFactorChange = (factor: string) => {
     const currentFactors = [...filters.motivationFactors];
@@ -100,22 +160,67 @@ export const FilterSidebar: React.FC = () => {
           {expandedSections.location && <div className="space-y-3">
               <div className="relative">
                 <Search size={16} className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
-                <input type="text" placeholder="City, State, or ZIP" className="w-full pl-10 pr-4 py-2.5 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary" value={filters.locations[0] || ''} onChange={handleLocationChange} />
+                <input
+                  type="text"
+                  placeholder="Search state or city (e.g., New Mexico)"
+                  className="w-full pl-10 pr-4 py-2.5 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
+                  value={locationQuery}
+                  onChange={(e) => setLocationQuery(e.target.value)}
+                />
               </div>
-              <div className="grid grid-cols-2 gap-2">
-                <button className="p-2 text-sm border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">
-                  Miami, FL
-                </button>
-                <button className="p-2 text-sm border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">
-                  Orlando, FL
-                </button>
-                <button className="p-2 text-sm border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">
-                  Tampa, FL
-                </button>
-                <button className="p-2 text-sm border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">
-                  Jacksonville, FL
-                </button>
-              </div>
+              {/* Top cities quick picks */}
+              {!locationQuery && (
+                <div>
+                  <p className="text-xs text-gray-500 mb-2">Top Cities</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    {TOP_CITIES.map(c => (
+                      <button
+                        key={c}
+                        className={`p-2 text-sm rounded-lg border transition-colors ${filters.locations.includes(c) ? 'bg-primary text-white border-primary' : 'bg-white border-gray-200 text-gray-700 hover:bg-gray-50'}`}
+                        onClick={() => toggleCity(c)}
+                      >
+                        {c}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {/* Filtered results when searching */}
+              {locationQuery && (
+                <div>
+                  {TOP_CITIES.filter(c => c.toLowerCase().includes(locationQuery.toLowerCase())).length > 0 && (
+                    <>
+                      <p className="text-xs text-gray-500 mb-2">Cities</p>
+                      <div className="grid grid-cols-2 gap-2 mb-2">
+                        {TOP_CITIES.filter(c => c.toLowerCase().includes(locationQuery.toLowerCase())).map(c => (
+                          <button
+                            key={c}
+                            className={`p-2 text-sm rounded-lg border transition-colors ${filters.locations.includes(c) ? 'bg-primary text-white border-primary' : 'bg-white border-gray-200 text-gray-700 hover:bg-gray-50'}`}
+                            onClick={() => toggleCity(c)}
+                          >
+                            {c}
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                  <p className="text-xs text-gray-500 mb-2">US States</p>
+                  <div className="grid grid-cols-3 gap-2 max-h-48 overflow-y-auto pr-1">
+                    {US_STATES.filter(s =>
+                      s.name.toLowerCase().includes(locationQuery.toLowerCase()) ||
+                      s.abbr.toLowerCase().includes(locationQuery.toLowerCase())
+                    ).map(s => (
+                      <button
+                        key={s.abbr}
+                        className={`px-2 py-1.5 text-xs rounded-md border transition-colors ${filters.locations.includes(s.abbr) ? 'bg-primary text-white border-primary' : 'bg-white border-gray-200 text-gray-700 hover:bg-gray-50'}`}
+                        onClick={() => handleToggleState(s.abbr)}
+                      >
+                        {s.abbr} — {s.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>}
         </div>
         {/* Investment Strategy Section */}
