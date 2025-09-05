@@ -25,7 +25,10 @@ interface PropertyResult extends PropertyData {
 
 export const DealFinder: React.FC = () => {
   const [results, setResults] = useState<PropertyResult[]>([]);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
   const [isLoading, setIsLoading] = useState(true);
+  const [isAppending, setIsAppending] = useState(false);
   const [isFilteredResults, setIsFilteredResults] = useState(false);
   const [selectedProperty, setSelectedProperty] = useState<PropertyResult | null>(null);
   const [savedProperties, setSavedProperties] = useState<string[]>([]);
@@ -38,8 +41,28 @@ export const DealFinder: React.FC = () => {
 
   // Fetch initial properties when component mounts
   useEffect(() => {
-    fetchInitialProperties();
-  }, []);
+    // If page is 1, replace results; otherwise, append
+    if (page === 1) {
+      fetchInitialProperties(1, pageSize);
+    } else {
+      const loadMore = async () => {
+        setIsAppending(true);
+        try {
+          const response = await propertyService.getFeaturedProperties(page, pageSize);
+          if (response.data && response.data.length > 0) {
+            const transformed = response.data.map(transformPropertyData);
+            const withCoords = await ensureCoordinates(transformed);
+            setResults(prev => [...prev, ...withCoords]);
+          }
+        } catch (e) {
+          console.error(e);
+        } finally {
+          setIsAppending(false);
+        }
+      };
+      loadMore();
+    }
+  }, [page, pageSize]);
 
   // Simple in-memory cache for geocoding results
   const geocodeCache = new Map<string, { lat: number; lng: number }>();
@@ -147,189 +170,36 @@ export const DealFinder: React.FC = () => {
   };
 
   // Function to fetch initial properties
-  const fetchInitialProperties = async () => {
+  const fetchInitialProperties = async (p: number = 1, s: number = 50) => {
     setIsLoading(true);
     setError(null);
     setIsFilteredResults(false);
     setSelectedProperties([]); // Clear selections when refreshing
     
     try {
-      const response = await propertyService.getFeaturedProperties();
+      const response = await propertyService.getFeaturedProperties(p, s);
       
       if (response.data && response.data.length > 0) {
         const transformedResults = response.data.map(transformPropertyData);
         const withCoords = await ensureCoordinates(transformedResults);
         setResults(withCoords);
       } else {
-        // Fallback to mock data if API returns empty
-        generateMockData();
+        setError('No properties available at the moment.');
+        setResults([]);
       }
     } catch (err) {
       console.error('Error fetching properties:', err);
       const errorMessage = err instanceof Error ? err.message : 'Unknown error';
       
       if (errorMessage.includes('CORS_ERROR')) {
-        setError('API temporarily unavailable due to CORS policy. Using demo data.');
+        setError('API temporarily unavailable due to CORS policy.');
       } else {
-        setError('Failed to load properties. Using demo data.');
+        setError('Failed to load properties.');
       }
-      
-      // Fallback to mock data
-      generateMockData();
+      setResults([]);
     } finally {
       setIsLoading(false);
     }
-  };
-
-  // Fallback mock data generation
-  const generateMockData = () => {
-    const count = Math.floor(Math.random() * 7) + 8;
-    const generatedResults: PropertyResult[] = [];
-    
-    const floridaCities = [
-      { city: 'Orlando', lat: 28.5383, lng: -81.3792 },
-      { city: 'Miami', lat: 25.7617, lng: -80.1918 },
-      { city: 'Tampa', lat: 27.9506, lng: -82.4572 },
-      { city: 'Jacksonville', lat: 30.3322, lng: -81.6557 },
-      { city: 'Fort Lauderdale', lat: 26.1224, lng: -80.1373 }
-    ];
-
-    for (let i = 1; i <= count; i++) {
-      const cityIndex = Math.floor(Math.random() * floridaCities.length);
-      const selectedCity = floridaCities[cityIndex];
-      const latOffset = (Math.random() - 0.5) * 0.1;
-      const lngOffset = (Math.random() - 0.5) * 0.1;
-      
-      const mockProperty: PropertyResult = {
-        id: `mock-${i}`,
-        absenteeOwner: Math.random() > 0.5,
-        address: {
-          address: `${1000 + i} ${['Main', 'Oak', 'Maple', 'Pine', 'Cedar'][Math.floor(Math.random() * 5)]} St`,
-          city: selectedCity.city,
-          county: 'Demo County',
-          fips: '12000',
-          state: 'FL',
-          street: `${1000 + i} ${['Main', 'Oak', 'Maple', 'Pine', 'Cedar'][Math.floor(Math.random() * 5)]} St`,
-          zip: '12345'
-        },
-        adjustableRate: false,
-        airConditioningAvailable: true,
-        apn: `123-456-789-${i}`,
-        assessedImprovementValue: Math.round(100000 + Math.random() * 200000),
-        assessedLandValue: Math.round(20000 + Math.random() * 50000),
-        assessedValue: Math.round(120000 + Math.random() * 250000),
-        assumable: false,
-        auction: false,
-        auctionDate: null,
-        basement: Math.random() > 0.7,
-        bathrooms: Math.floor(Math.random() * 3) + 1,
-        bedrooms: Math.floor(Math.random() * 4) + 2,
-        cashBuyer: Math.random() > 0.5,
-        companyName: 'Demo Company LLC',
-        corporateOwned: Math.random() > 0.6,
-        death: false,
-        deck: Math.random() > 0.7,
-        deckArea: Math.random() > 0.7 ? Math.floor(Math.random() * 200) + 50 : 0,
-        documentType: 'Warranty Deed',
-        documentTypeCode: 'DTWD',
-        equity: true,
-        equityPercent: Math.floor(Math.random() * 40) + 60,
-        estimatedEquity: Math.round(80000 + Math.random() * 150000),
-        estimatedValue: Math.round(150000 + Math.random() * 300000),
-        floodZone: Math.random() > 0.8,
-        floodZoneDescription: 'AREA OF MINIMAL FLOOD HAZARD',
-        floodZoneType: 'X',
-        foreclosure: false,
-        forSale: false,
-        freeClear: Math.random() > 0.7,
-        garage: Math.random() > 0.6,
-        highEquity: Math.random() > 0.6,
-        hoa: null,
-        inherited: false,
-        inStateAbsenteeOwner: Math.random() > 0.5,
-        investorBuyer: Math.random() > 0.5,
-        judgment: false,
-        landUse: 'Residential',
-        lastMortgage1Amount: null,
-        lastSaleAmount: (Math.round(80000 + Math.random() * 120000)).toString(),
-        lastSaleArmsLength: true,
-        lastSaleDate: new Date(Date.now() - Math.random() * 365 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-        lastUpdateDate: new Date().toISOString(),
-        latitude: selectedCity.lat + latOffset,
-        lenderName: 'Demo Bank',
-        listingAmount: null,
-        longitude: selectedCity.lng + lngOffset,
-        lotSquareFeet: Math.floor(Math.random() * 5000) + 3000,
-        mailAddress: {
-          address: `${2000 + i} Demo St`,
-          city: 'Demo City',
-          county: 'Demo County',
-          state: 'FL',
-          street: `${2000 + i} Demo St`,
-          zip: '54321'
-        },
-        medianIncome: (Math.round(50000 + Math.random() * 50000)).toString(),
-        MFH2to4: false,
-        MFH5plus: false,
-        mlsActive: false,
-        mlsCancelled: false,
-        mlsFailed: false,
-        mlsHasPhotos: false,
-        mlsLastSaleDate: new Date(Date.now() - Math.random() * 365 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-        mlsListingPrice: null,
-        mlsPending: false,
-        mlsSold: false,
-        negativeEquity: false,
-        openMortgageBalance: 0,
-        outOfStateAbsenteeOwner: Math.random() > 0.7,
-        owner1LastName: 'Demo Owner',
-        ownerOccupied: false,
-        patio: Math.random() > 0.6,
-        patioArea: Math.random() > 0.6 ? Math.floor(Math.random() * 150) + 30 : 0,
-        pool: Math.random() > 0.8,
-        poolArea: Math.random() > 0.8 ? Math.floor(Math.random() * 300) + 100 : 0,
-        portfolioPurchasedLast12Months: 0,
-        portfolioPurchasedLast6Months: 0,
-        preForeclosure: Math.random() > 0.8,
-        pricePerSquareFoot: Math.round(100 + Math.random() * 200),
-        priorSaleAmount: null,
-        privateLender: false,
-        propertyId: `mock-${i}`,
-        propertyType: ['SFR', 'MFR', 'COM'][Math.floor(Math.random() * 3)],
-        propertyUse: 'Residential (General/Single)',
-        propertyUseCode: 380,
-        recordingDate: new Date(Date.now() - Math.random() * 365 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-        rentAmount: Math.round(1500 + Math.random() * 1000),
-        reo: false,
-        roofConstruction: null,
-        roofMaterial: null,
-        roomsCount: Math.floor(Math.random() * 4) + 4,
-        squareFeet: Math.floor(Math.random() * 2000) + 1000,
-        stories: Math.floor(Math.random() * 2) + 1,
-        taxLien: Math.random() > 0.85,
-        totalPortfolioEquity: (Math.round(500000 + Math.random() * 1000000)).toString(),
-        totalPortfolioMortgageBalance: '0',
-        totalPortfolioValue: (Math.round(500000 + Math.random() * 1000000)).toString(),
-        totalPropertiesOwned: (Math.floor(Math.random() * 10) + 1).toString(),
-        unitsCount: 1,
-        vacant: Math.random() > 0.7,
-        yearBuilt: Math.floor(Math.random() * 50) + 1970,
-        yearsOwned: Math.floor(Math.random() * 20) + 1,
-        // UI-specific properties
-        image: `https://source.unsplash.com/random/800x600/?house,${i}`,
-        cashFlow: Math.floor(Math.random() * 1000) + 200,
-        capRate: Math.floor(Math.random() * 10) + 5,
-        roi: Math.floor(Math.random() * 20) + 10,
-        rehabCost: Math.floor(Math.random() * 50000) + 5000,
-        motivationFactors: ['Out-of-State', 'Tax Liens', 'Divorce', 'Probate', 'Foreclosure', 'Vacant', 'High Equity'].slice(0, Math.floor(Math.random() * 3) + 1),
-        daysOnMarket: Math.floor(Math.random() * 90) + 10,
-        dealScore: Math.floor(Math.random() * 30) + 70
-      };
-      
-      generatedResults.push(mockProperty);
-    }
-    
-    setResults(generatedResults);
   };
 
   const handleFiltersApplied = async (filters: FilterState) => {
@@ -360,7 +230,7 @@ export const DealFinder: React.FC = () => {
         maxSqft: filters.maxSqft
       };
 
-      const response = await propertyService.searchProperties(searchFilters);
+      const response = await propertyService.searchProperties({ ...searchFilters, page, size: pageSize });
       
       if (response.data && response.data.length > 0) {
         const transformedResults = response.data.map(transformPropertyData);
@@ -375,13 +245,11 @@ export const DealFinder: React.FC = () => {
       const errorMessage = err instanceof Error ? err.message : 'Unknown error';
       
       if (errorMessage.includes('CORS_ERROR')) {
-        setError('API search temporarily unavailable due to CORS policy. Please try refreshing for demo data.');
-        // Fallback to mock data for search too
-        generateMockData();
+        setError('API search temporarily unavailable due to CORS policy. Please try again.');
       } else {
         setError('Failed to search properties. Please try again.');
-        setResults([]);
       }
+      setResults([]);
     } finally {
       setIsLoading(false);
     }
@@ -496,11 +364,10 @@ export const DealFinder: React.FC = () => {
   // Handle refreshing results
   const handleRefreshResults = () => {
     if (isFilteredResults) {
-      // Re-apply current filters
-      // This would need to be implemented based on current filter state
-      fetchInitialProperties();
+      // Placeholder: re-trigger current filter search with same page
+      setPage((p) => p); // no-op to trigger effect if needed
     } else {
-      fetchInitialProperties();
+      fetchInitialProperties(page, pageSize);
     }
   };
 
@@ -641,6 +508,13 @@ export const DealFinder: React.FC = () => {
                       <MapIcon size={16} className="mr-1.5" />
                       Map
                     </button>
+                  </div>
+                )}
+                {!isLoading && (
+                  <div className="flex items-center gap-2 ml-3">
+                    <button onClick={() => setPage(Math.max(1, page - 1))} className="px-3 py-1.5 text-sm bg-white border border-gray-200 rounded-lg hover:bg-gray-50">Prev</button>
+                    <span className="text-sm text-gray-600">Page {page}</span>
+                    <button onClick={() => setPage(page + 1)} className="px-3 py-1.5 text-sm bg-white border border-gray-200 rounded-lg hover:bg-gray-50">Next</button>
                   </div>
                 )}
               </div>
@@ -817,6 +691,27 @@ export const DealFinder: React.FC = () => {
                     )}
                   </div>
                 )}
+                {/* Load More */}
+                {viewMode === 'grid' && results.length > 0 && (
+                  <div className="flex flex-col items-center mt-6">
+                    {isAppending && (
+                      <div className="flex items-center text-gray-500 text-sm mb-2">
+                        <svg className="animate-spin h-5 w-5 mr-2 text-primary" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        Loading more properties...
+                      </div>
+                    )}
+                    <button
+                      onClick={() => setPage(page + 1)}
+                      disabled={isAppending}
+                      className={`px-4 py-2 bg-white border border-gray-200 rounded-lg text-sm ${isAppending ? 'opacity-60 cursor-not-allowed' : 'hover:bg-gray-50'}`}
+                    >
+                      {isAppending ? 'Loading...' : 'Load More'}
+                    </button>
+                  </div>
+                )}
               </>
             )}
           </div>
@@ -828,8 +723,8 @@ export const DealFinder: React.FC = () => {
         <PropertyDetailsModal 
           property={convertToDetailsProperty(selectedProperty)} 
           onClose={handleCloseDetails} 
-          onSave={(id) => handleSaveProperty(id.toString())} 
-          savedProperties={savedProperties.map(id => parseInt(id) || 0)} 
+          allProperties={results as any}
+          sourceProperty={selectedProperty as any}
         />
       )}
       

@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import crypto from 'crypto';
 import axios from 'axios';
 import { LeaderboardService } from '../services/leaderboardService';
 
@@ -57,7 +58,7 @@ router.get('/search', async (req: Request, res: Response) => {
     const searchParams = new URLSearchParams();
     
     // Add filters to search parameters
-    const filters = req.query as PropertySearchFilters;
+    const filters = req.query as PropertySearchFilters & { page?: string | number; size?: string | number };
     
     if (filters.locations && Array.isArray(filters.locations)) {
       searchParams.append('locations', filters.locations.join(','));
@@ -131,8 +132,13 @@ router.get('/search', async (req: Request, res: Response) => {
 
     console.log('🌐 Calling external API for property search (POST method)');
 
+    // Pagination defaults
+    const size = Math.max(1, Math.min(200, parseInt((filters.size as any) || '50', 10)));
+    const page = Math.max(1, parseInt((filters.page as any) || '1', 10));
+    const resultIndex = (page - 1) * size;
+
     // Build the request body with filters
-    const requestBody: any = {};
+    const requestBody: any = { size, resultIndex, mls_active: true };
     
     // Add filters to request body (convert from query params to body params)
     if (filters.locations && Array.isArray(filters.locations)) {
@@ -185,7 +191,8 @@ router.get('/search', async (req: Request, res: Response) => {
     // Return the data to frontend
     return res.json({
       success: true,
-      data: response.data
+      data: response.data,
+      meta: { page, size, resultIndex }
     });
 
   } catch (error: any) {
@@ -242,10 +249,16 @@ router.get('/featured', async (_req: Request, res: Response) => {
       'x-api-key': `${apiKey.substring(0, 15)}...`,
       'User-Agent': 'AcquireFlow/1.0'
     });
-    console.log('📤 Request body:', JSON.stringify({}, null, 2));
+    // Pagination: page & size from query
+    const q = _req.query as any;
+    const size = Math.max(1, Math.min(200, parseInt(q?.size || '50', 10)));
+    const page = Math.max(1, parseInt(q?.page || '1', 10));
+    const resultIndex = (page - 1) * size;
+    const body = { size, resultIndex, mls_active: true };
+    console.log('📤 Request body:', JSON.stringify(body, null, 2));
 
     // Use the correct format from the cURL command
-    const response = await axios.post('https://api.realestateapi.com/v2/PropertySearch', {}, {
+    const response = await axios.post('https://api.realestateapi.com/v2/PropertySearch', body, {
       headers: {
         'Content-Type': 'application/json',
         'x-api-key': apiKey,
@@ -260,7 +273,8 @@ router.get('/featured', async (_req: Request, res: Response) => {
     // Return the data to frontend
     return res.json({
       success: true,
-      data: response.data
+      data: response.data,
+      meta: { page, size, resultIndex }
     });
 
   } catch (error: any) {
@@ -523,6 +537,85 @@ router.get('/monthly-kpis', async (req: Request, res: Response) => {
   } catch (error: any) {
     const message = error?.message || 'Failed to compute monthly KPIs';
     return res.status(500).json({ success: false, message });
+  }
+});
+
+/**
+ * PUBLIC SHARE LINK SUPPORT
+ * - GET /api/v1/properties/share-link?id=PROPERTY_ID&expiresDays=7
+ *   Returns a signed URL that can be opened without login.
+ * - GET /api/v1/properties/shared/:token
+ *   Validates token and returns property details.
+ */
+const getShareSecret = (): string => process.env['SHARE_LINK_SECRET'] || process.env['JWT_SECRET'] || 'acquireflow_share_secret_dev';
+
+type ShareTokenPayload = { id: string; exp: number; snap?: any };
+
+const signToken = (payload: ShareTokenPayload): string => {
+  const secret = getShareSecret();
+  const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const sig = crypto.createHmac('sha256', secret).update(body).digest('base64url');
+  return `${body}.${sig}`;
+};
+
+const verifyToken = (token: string): ShareTokenPayload | null => {
+  const secret = getShareSecret();
+  const [body, sig] = token.split('.');
+  if (!body || !sig) return null;
+  const expected = crypto.createHmac('sha256', secret).update(body).digest('base64url');
+  if (expected !== sig) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8')) as ShareTokenPayload;
+    if (!payload?.id || !payload?.exp || Date.now() > payload.exp) return null;
+    return payload;
+  } catch {
+    return null;
+  }
+};
+
+router.get('/share-link', async (req: Request, res: Response) => {
+  try {
+    const id = (req.query['id'] as string || '').trim();
+    if (!id) return res.status(400).json({ success: false, message: 'id required' });
+    const days = Math.max(1, Math.min(90, parseInt((req.query['expiresDays'] as string) || '7', 10) || 7));
+    const exp = Date.now() + days * 24 * 60 * 60 * 1000;
+    let snap: any | undefined;
+    const snapshotParam = (req.query['snapshot'] as string | undefined);
+    if (snapshotParam) {
+      try { snap = JSON.parse(Buffer.from(snapshotParam, 'base64url').toString('utf8')); } catch {}
+    }
+    const token = signToken({ id, exp, snap });
+    const base = `${req.protocol}://${req.get('host')}`;
+    const url = `${base}/api/v1/properties/shared/${token}`;
+    return res.json({ success: true, data: { token, url, expiresAt: new Date(exp).toISOString() } });
+  } catch (error: any) {
+    return res.status(500).json({ success: false, message: error?.message || 'failed to create share link' });
+  }
+});
+
+router.get('/shared/:token', async (req: Request, res: Response) => {
+  try {
+    const { token } = req.params;
+    const payload = verifyToken(String(token || ''));
+    if (!payload) return res.status(401).json({ success: false, message: 'Invalid or expired token' });
+
+    // reuse property details logic; if fails, fall back to embedded snapshot
+    const apiKey = process.env['REAL_ESTATE_API_KEY'];
+    if (!apiKey) {
+      return res.status(500).json({ success: false, message: 'Real Estate API key not configured' });
+    }
+    const apiUrl = `https://api.realestateapi.com/v2/Property/${payload.id}?apikey=${apiKey}`;
+    try {
+      const response = await axios.get(apiUrl, { headers: { 'Accept': 'application/json', 'User-Agent': 'AcquireFlow/1.0' }, timeout: 30000 });
+      return res.json({ success: true, data: response.data, shared: true });
+    } catch (err) {
+      if (payload.snap) {
+        return res.json({ success: true, data: payload.snap, shared: true, fallback: true });
+      }
+      throw err;
+    }
+  } catch (error: any) {
+    return res.status(500).json({ success: false, message: error?.message || 'Failed to fetch shared property' });
   }
 });
 /**

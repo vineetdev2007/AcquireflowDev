@@ -230,6 +230,24 @@ export interface OpportunitySummary {
   projectedRoi: number; // percent
 }
 
+export interface LoanProduct {
+  name: string;
+  downPaymentPct: number;
+  rate: number;
+  termMonths?: number;
+  interestOnly?: boolean;
+}
+
+export interface FinanceAssumptions {
+  taxRateAnnual: number;
+  insuranceRateAnnual: number;
+  managementRate: number;
+  maintenanceRate: number;
+  defaultVacancyRate: number;
+  defaultLtv: number;
+  defaultInterestRate: number;
+}
+
 class PropertyService {
   private baseUrl: string;
   private apiKey: string;
@@ -282,9 +300,9 @@ class PropertyService {
           await new Promise(res => setTimeout(res, 300 * Math.pow(2, attempt)));
           return doFetch(attempt + 1);
         }
-        // If CORS error, provide a more helpful message
+        // If CORS error, provide a more helpful message (no mock fallback)
         if (error instanceof TypeError && error.message.includes('fetch')) {
-          throw new Error('CORS_ERROR: Unable to connect to real estate API. Using mock data instead.');
+          throw new Error('CORS_ERROR: Unable to connect to real estate API.');
         }
         throw error;
       }
@@ -301,8 +319,14 @@ class PropertyService {
   /**
    * Search for properties based on filters
    */
-  async searchProperties(filters: PropertySearchFilters): Promise<PropertySearchResponse> {
+  async searchProperties(filters: PropertySearchFilters & { page?: number; size?: number }): Promise<PropertySearchResponse> {
     const searchParams = new URLSearchParams();
+    if ((filters as any).page) {
+      searchParams.append('page', String((filters as any).page));
+    }
+    if ((filters as any).size) {
+      searchParams.append('size', String((filters as any).size));
+    }
     
     // Add filters to search parameters
     if (filters.locations && filters.locations.length > 0) {
@@ -385,11 +409,12 @@ class PropertyService {
   /**
    * Get featured properties (default search)
    */
-   async getFeaturedProperties(): Promise<PropertySearchResponse> {
+   async getFeaturedProperties(page: number = 1, size: number = 50): Promise<PropertySearchResponse> {
     console.log('🔍 Fetching featured properties from backend:', `${this.baseUrl}/properties/featured`);
     
     try {
-      const result = await this.request<{success: boolean, data: PropertySearchResponse}>('/properties/featured');
+      const qs = new URLSearchParams({ page: String(page), size: String(size) }).toString();
+      const result = await this.request<{success: boolean, data: PropertySearchResponse}>(`/properties/featured?${qs}`);
       console.log('✅ Backend API Response received:', result);
       return result.data;
     } catch (error) {
@@ -467,6 +492,29 @@ class PropertyService {
     if (!city || !state) throw new Error('Invalid location; expected format "City, ST"');
     const qs = new URLSearchParams({ city, state }).toString();
     const result = await this.request<{ success: boolean; data: OpportunitySummary }>(`/properties/opportunity-summary?${qs}`);
+    return result.data;
+  }
+
+  async getLoanProducts(): Promise<LoanProduct[]> {
+    const result = await this.request<{ success: boolean; data: LoanProduct[] }>(`/finance/products`);
+    return result.data;
+  }
+
+  async getFinanceAssumptions(): Promise<FinanceAssumptions> {
+    const result = await this.request<{ success: boolean; data: FinanceAssumptions }>(`/finance/assumptions`);
+    return result.data;
+  }
+
+  async createShareLink(propertyId: string, expiresDays: number = 7, snapshotBase64?: string): Promise<{ url: string; token: string; expiresAt: string }> {
+    const params: Record<string, string> = { id: propertyId, expiresDays: String(expiresDays) };
+    if (snapshotBase64) params['snapshot'] = snapshotBase64;
+    const qs = new URLSearchParams(params).toString();
+    const result = await this.request<{ success: boolean; data: { url: string; token: string; expiresAt: string } }>(`/properties/share-link?${qs}`);
+    return result.data;
+  }
+
+  async getSharedProperty(token: string): Promise<PropertyData> {
+    const result = await this.request<{ success: boolean; data: PropertyData }>(`/properties/shared/${token}`);
     return result.data;
   }
 }

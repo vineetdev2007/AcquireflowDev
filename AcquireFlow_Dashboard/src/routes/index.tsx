@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useParams } from 'react-router-dom';
 import { AuthPage } from '../components/Auth/AuthPage';
 import { Dashboard } from '../components/Dashboard/Dashboard';
 import ProtectedRoute from './ProtectedRoute';
@@ -21,6 +21,8 @@ import { SelfServiceTools } from '../components/HelpCenter/SelfServiceTools';
 import { PremiumSupport } from '../components/HelpCenter/PremiumSupport';
 import { ResetPasswordForm } from '../components/Auth/ResetPasswordForm';
 import { Inbox } from '../components/Inbox/Inbox';
+import { propertyService } from '../services/propertyService';
+import { PropertyDetailsModal } from '../components/DealFinder/PropertyDetailsModal';
 
 export const AppRoutes: React.FC = () => {
   // Initialize currentPage from localStorage or default to 'Dashboard'
@@ -91,6 +93,8 @@ export const AppRoutes: React.FC = () => {
       <Route path="/signup" element={<AuthPage />} />
       <Route path="/reset" element={<AuthPage />} />
       <Route path="/reset-password" element={<ResetPasswordForm />} />
+      {/* Public share view, no auth */}
+      <Route path="/share/:token" element={<PublicShareView />} />
       <Route
         path="/*"
         element={
@@ -106,6 +110,54 @@ export const AppRoutes: React.FC = () => {
         }
       />
     </Routes>
+  );
+};
+
+const PublicShareView: React.FC = () => {
+  const { token } = useParams();
+  const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState<string | null>(null);
+  const [data, setData] = React.useState<any | null>(null);
+  React.useEffect(() => {
+    const run = async () => {
+      try {
+        if (!token) throw new Error('Missing token');
+        const d = await propertyService.getSharedProperty(token);
+        setData(d as any);
+      } catch (e: any) {
+        setError(e?.message || 'Failed to load shared property');
+      } finally {
+        setLoading(false);
+      }
+    };
+    run();
+  }, [token]);
+  if (loading) return <div className="p-8 text-center">Loading shared property...</div>;
+  if (error || !data) return <div className="p-8 text-center text-red-600">{error || 'Not found'}</div>;
+  // Minimal read-only view using the modal’s formatter
+  const fake = {
+    id: Number((data as any).id || 0),
+    address: (data as any).address?.address || 'Property',
+    city: (data as any).address?.city || '',
+    state: (data as any).address?.state || '',
+    price: (data as any).estimatedValue || 0,
+    type: (data as any).propertyType || 'SFR',
+    beds: (data as any).bedrooms || 0,
+    baths: (data as any).bathrooms || 0,
+    sqft: (data as any).squareFeet || 0,
+    image: `https://source.unsplash.com/random/800x600/?house,${(data as any).id}`,
+    cashFlow: 0,
+    capRate: 0,
+    roi: 0,
+    rehabCost: 0,
+    motivationFactors: [],
+    daysOnMarket: 0,
+    dealScore: 0,
+    lat: (data as any).latitude || 0,
+    lng: (data as any).longitude || 0,
+  };
+  return (
+    <PropertyDetailsModal property={fake as any} onClose={() => (window.location.href = '/')} savedProperties={[]} allProperties={[]} />
   );
 };
 
