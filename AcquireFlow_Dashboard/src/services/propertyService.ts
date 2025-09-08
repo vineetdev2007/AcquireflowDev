@@ -568,6 +568,18 @@ class PropertyService {
     const result = await this.request<{ success: boolean; data: PropertyData }>(`/properties/shared/${token}`);
     return result.data;
   }
+
+  /**
+   * Resolve a Zillow homedetails link with zpid using backend proxy. Falls back to slug URL if zpid cannot be resolved.
+   */
+  async getZillowLink(params: { address: string; city: string; state: string; zip?: string; lat?: number; lng?: number }): Promise<{ url: string; zpid?: string | number | null; resolved: boolean }> {
+    const qs = new URLSearchParams({ address: params.address, city: params.city, state: params.state } as any);
+    if (params.zip) qs.append('zip', params.zip);
+    if (Number.isFinite(params.lat as number)) qs.append('lat', String(params.lat));
+    if (Number.isFinite(params.lng as number)) qs.append('lng', String(params.lng));
+    const result = await this.request<{ success: boolean; data: { url: string; zpid?: string | number | null; resolved: boolean } }>(`/properties/zillow-link?${qs.toString()}`);
+    return result.data;
+  }
 }
 
 export const propertyService = new PropertyService();

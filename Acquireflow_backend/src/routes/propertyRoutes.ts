@@ -5,6 +5,18 @@ import { LeaderboardService } from '../services/leaderboardService';
 
 const router = Router();
 
+// Simple in-memory cache for Zillow link lookups to reduce rate-limit pressure
+type ZillowCacheEntry = { url: string; zpid: string | number | null; resolved: boolean; ts: number };
+const zillowCache: Map<string, ZillowCacheEntry> = new Map();
+const ZILLOW_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+const nowMs = () => Date.now();
+const normalizeKey = (s: string) => s.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-');
+
+// Basic cache for property searches/featured to soften rate limits
+type PropertyCacheEntry = { data: any; ts: number };
+const propertyCache: Map<string, PropertyCacheEntry> = new Map();
+const PROPERTY_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
+
 // Interface for property search filters
 interface PropertySearchFilters {
   locations?: string[];
@@ -202,6 +214,13 @@ router.get('/search', async (req: Request, res: Response) => {
 
     console.log('📋 Request body:', JSON.stringify(requestBody, null, 2));
 
+    // Basic caching for search requests to mitigate rate limits
+    const cacheKey = `search:${JSON.stringify(requestBody)}`;
+    const cached = propertyCache.get(cacheKey);
+    if (cached && nowMs() - cached.ts < PROPERTY_CACHE_TTL_MS) {
+      return res.json({ success: true, data: cached.data, meta: { page, size, resultIndex, cached: true } });
+    }
+
     // Use the correct format from the cURL command
     const response = await axios.post('https://api.realestateapi.com/v2/PropertySearch', requestBody, {
       headers: {
@@ -232,7 +251,8 @@ router.get('/search', async (req: Request, res: Response) => {
       });
       payload = Array.isArray(payload) ? filtered : { ...payload, data: filtered };
     }
-    // Return the data to frontend
+    // Cache and return
+    propertyCache.set(cacheKey, { data: payload, ts: nowMs() });
     return res.json({ success: true, data: payload, meta: { page, size, resultIndex } });
 
   } catch (error: any) {
@@ -337,6 +357,13 @@ router.get('/featured', async (_req: Request, res: Response) => {
     const body = { size, resultIndex, mls_active: true };
     console.log('📤 Request body:', JSON.stringify(body, null, 2));
 
+    // Basic caching layer to avoid hammering upstream
+    const cacheKey = `featured:${body.size}:${body.resultIndex}`;
+    const cached = propertyCache.get(cacheKey);
+    if (cached && nowMs() - cached.ts < PROPERTY_CACHE_TTL_MS) {
+      return res.json({ success: true, data: cached.data, meta: { page, size, resultIndex, cached: true } });
+    }
+
     // Use the correct format from the cURL command
     const response = await axios.post('https://api.realestateapi.com/v2/PropertySearch', body, {
       headers: {
@@ -350,7 +377,8 @@ router.get('/featured', async (_req: Request, res: Response) => {
     console.log('✅ External API response received:', response.status);
     console.log('📊 Featured properties count:', response.data?.data?.length || 0);
 
-    // Return the data to frontend
+    // Save to cache and return the data to frontend
+    propertyCache.set(cacheKey, { data: response.data, ts: nowMs() });
     return res.json({
       success: true,
       data: response.data,
@@ -500,6 +528,208 @@ router.get('/market-heatmap', async (req: Request, res: Response) => {
   } catch (error: any) {
     const message = error?.message || 'Failed to compute market heatmap';
     return res.status(500).json({ success: false, message });
+  }
+});
+
+/**
+ * GET /api/v1/properties/zillow-link
+ * Query: address=7200 N Ocean Blvd #440&city=Myrtle Beach&state=SC&zip=29572
+ * Attempts to resolve a Zillow zpid and returns a direct homedetails URL.
+ * Uses RapidAPI (zillow56) if ZILLOW_RAPIDAPI_KEY is configured. Falls back to slug URL.
+ */
+router.get('/zillow-link', async (req: Request, res: Response) => {
+  try {
+    const address = String((req.query as any)['address'] || '').trim();
+    const city = String((req.query as any)['city'] || '').trim();
+    const state = String((req.query as any)['state'] || '').trim();
+    const zip = String((req.query as any)['zip'] || '').trim();
+    const latQ = (req.query as any)['lat'];
+    const lngQ = (req.query as any)['lng'];
+    const lat = latQ !== undefined ? parseFloat(String(latQ)) : undefined;
+    const lng = lngQ !== undefined ? parseFloat(String(lngQ)) : undefined;
+    if (!address || !city || !state) {
+      return res.status(400).json({ success: false, message: 'address, city, state are required' });
+    }
+
+    // Cache lookup (address+city+state+zip normalized)
+    const cacheKey = normalizeKey(`${address}|${city}|${state}|${zip}|${Math.round((lat || 0) * 10000)}|${Math.round((lng || 0) * 10000)}`);
+    const cached = zillowCache.get(cacheKey);
+    if (cached && (nowMs() - cached.ts) < ZILLOW_CACHE_TTL_MS) {
+      return res.json({ success: true, data: { url: cached.url, zpid: cached.zpid, resolved: cached.resolved, cached: true } });
+    }
+
+    const buildSlugUrl = () => {
+      const slug = `${address}, ${city}, ${state}${zip ? ' ' + zip : ''}`
+        .replace(/#/g, '')
+        .replace(/,/g, '')
+        .replace(/\s+/g, '-')
+        .replace(/[^a-zA-Z0-9-]/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-|-$/g, '');
+      return `https://www.zillow.com/homes/${slug}_rb/`;
+    };
+
+    const rapidKey = process.env['ZILLOW_RAPIDAPI_KEY'] || process.env['RAPIDAPI_KEY'];
+    const primaryHost = process.env['ZILLOW_RAPIDAPI_HOST'] || 'zillow56.p.rapidapi.com';
+    const fallbackHosts = [primaryHost, 'zillow-com1.p.rapidapi.com', 'zillow2.p.rapidapi.com']
+      .filter((v, i, arr) => !!v && arr.indexOf(v) === i);
+
+    let resolvedUrl: string | null = null;
+    let zpid: string | number | null = null;
+
+    const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+    const haversineMiles = (lat1?: number, lon1?: number, lat2?: number, lon2?: number): number | null => {
+      if (!Number.isFinite(lat1 as number) || !Number.isFinite(lon1 as number) || !Number.isFinite(lat2 as number) || !Number.isFinite(lon2 as number)) return null;
+      const toRad = (d: number) => (d * Math.PI) / 180;
+      const R = 3958.8; // miles
+      const dLat = toRad((lat2 as number) - (lat1 as number));
+      const dLon = toRad((lon2 as number) - (lon1 as number));
+      const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1 as number)) * Math.cos(toRad(lat2 as number)) * Math.sin(dLon / 2) ** 2;
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      return R * c;
+    };
+
+    type ZillowCandidate = { zpid?: string | number; detailUrl?: string; street?: string; city?: string; state?: string; zip?: string; latitude?: number; longitude?: number };
+    const extractCandidates = (payload: any): ZillowCandidate[] => {
+      const arr: any[] = [];
+      if (!payload) return [];
+      if (Array.isArray(payload)) arr.push(...payload);
+      if (Array.isArray(payload?.results)) arr.push(...payload.results);
+      if (Array.isArray(payload?.homes)) arr.push(...payload.homes);
+      if (Array.isArray(payload?.props)) arr.push(...payload.props);
+      if (Array.isArray(payload?.data)) arr.push(...payload.data);
+      if (Array.isArray(payload?.listResults)) arr.push(...payload.listResults);
+      if (Array.isArray(payload?.cat1?.searchResults?.listResults)) arr.push(...payload.cat1.searchResults.listResults);
+      return arr.map((it: any) => {
+        const info = it?.hdpData?.homeInfo || it;
+        const latLong = it?.latLong || it?.coordinate || {};
+        return {
+          zpid: info?.zpid || it?.zpid,
+          detailUrl: it?.detailUrl || it?.url || it?.href,
+          street: info?.streetAddress || it?.address || it?.streetAddress,
+          city: info?.city || it?.city,
+          state: info?.state || it?.state,
+          zip: info?.zipcode || it?.zip || it?.zipcode,
+          latitude: info?.latitude || latLong?.latitude,
+          longitude: info?.longitude || latLong?.longitude,
+        } as ZillowCandidate;
+      });
+    };
+
+    const scoreCandidate = (c: ZillowCandidate): number => {
+      let score = 0;
+      const inStreet = normalize(String(c.street || ''));
+      const inCity = normalize(String(c.city || ''));
+      const inState = normalize(String(c.state || ''));
+      const inZip = normalize(String(c.zip || ''));
+
+      const streetNum = (address.match(/\d+/)?.[0] || '').toLowerCase();
+      const streetName = normalize(address.replace(/\d+/g, ''));
+      if (streetNum && inStreet.includes(normalize(streetNum))) score += 45;
+      if (streetName && inStreet.includes(streetName.slice(0, Math.min(8, streetName.length)))) score += 25;
+      if (inCity && inCity === normalize(city)) score += 10;
+      if (inState && inState === normalize(state)) score += 10;
+      if (zip && inZip && inZip.startsWith(normalize(zip))) score += 10;
+
+      const d = haversineMiles(lat, lng, c.latitude, c.longitude);
+      if (d !== null) {
+        if (d < 0.25) score += 30;
+        else if (d < 0.5) score += 24;
+        else if (d < 1.0) score += 18;
+        else if (d < 2.0) score += 10;
+      }
+      if (c.zpid) score += 5; // prefer candidates with explicit zpid
+      return score;
+    };
+
+    if (rapidKey) {
+      for (const rapidHost of fallbackHosts) {
+        try {
+          // Call search with full address
+          const locationFull = `${address}, ${city}, ${state} ${zip}`.trim();
+          const searchResp = await axios.get(`https://${rapidHost}/search`, {
+            params: { location: locationFull },
+            headers: {
+              'X-RapidAPI-Key': rapidKey,
+              'X-RapidAPI-Host': rapidHost,
+              'Accept': 'application/json',
+              'User-Agent': 'AcquireFlow/1.0'
+            },
+            timeout: 15000
+          }).catch(() => ({ data: null } as any));
+
+          const candidates1 = extractCandidates(searchResp?.data);
+
+          // Also try a broader extended search in the city/state
+          const extResp = await axios.get(`https://${rapidHost}/propertyExtendedSearch`, {
+            params: { location: `${city}, ${state}` },
+            headers: {
+              'X-RapidAPI-Key': rapidKey,
+              'X-RapidAPI-Host': rapidHost,
+              'Accept': 'application/json',
+              'User-Agent': 'AcquireFlow/1.0'
+            },
+            timeout: 15000
+          }).catch(() => ({ data: null } as any));
+
+          const candidates2 = extractCandidates(extResp?.data);
+          const all = [...candidates1, ...candidates2].filter(Boolean);
+
+          if (all.length) {
+            const scored = all
+              .map(c => ({ c, s: scoreCandidate(c) }))
+              .sort((a, b) => b.s - a.s);
+            const best = scored[0];
+            if (best && best.s >= 50 && best.c.zpid) {
+              zpid = best.c.zpid as any;
+              const detailUrl = best.c.detailUrl || '';
+              if (detailUrl && /zpid/i.test(detailUrl)) {
+                resolvedUrl = detailUrl.startsWith('http') ? detailUrl : `https://www.zillow.com${detailUrl}`;
+              } else {
+                const slug = `${address}, ${city}, ${state}${zip ? ' ' + zip : ''}`
+                  .replace(/#/g, '')
+                  .replace(/,/g, '')
+                  .replace(/\s+/g, '-')
+                  .replace(/[^a-zA-Z0-9-]/g, '-')
+                  .replace(/-+/g, '-')
+                  .replace(/^-|-$/g, '');
+                resolvedUrl = `https://www.zillow.com/homedetails/${slug}/${zpid}_zpid/`;
+              }
+              // store in cache and stop trying other hosts
+              zillowCache.set(cacheKey, { url: resolvedUrl, zpid, resolved: true, ts: nowMs() });
+              break; // stop trying other hosts
+            }
+          }
+        } catch (err: any) {
+          // try next host
+          continue;
+        }
+      }
+    }
+
+    const fallbackUrl = resolvedUrl || buildSlugUrl();
+    // Cache fallback too (prevents hammering)
+    zillowCache.set(cacheKey, { url: fallbackUrl, zpid: zpid || null, resolved: !!resolvedUrl, ts: nowMs() });
+    return res.json({ success: true, data: { url: fallbackUrl, zpid: zpid || null, resolved: !!resolvedUrl } });
+  } catch (error: any) {
+    if (error?.response?.status === 429) {
+      // Gracefully degrade to slug url instead of failing the UI
+      const address = String((req.query as any)['address'] || '').trim();
+      const city = String((req.query as any)['city'] || '').trim();
+      const state = String((req.query as any)['state'] || '').trim();
+      const zip = String((req.query as any)['zip'] || '').trim();
+      const slug = `${address}, ${city}, ${state}${zip ? ' ' + zip : ''}`
+        .replace(/#/g, '')
+        .replace(/,/g, '')
+        .replace(/\s+/g, '-')
+        .replace(/[^a-zA-Z0-9-]/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-|-$/g, '');
+      const url = `https://www.zillow.com/homes/${slug}_rb/`;
+      return res.json({ success: true, data: { url, zpid: null, resolved: false, rateLimited: true } });
+    }
+    return res.status(500).json({ success: false, message: error?.message || 'Failed to resolve Zillow link' });
   }
 });
 

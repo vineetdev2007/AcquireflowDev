@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { X, MapPin, Clock, Star, Share2, ChevronRight, Printer, Download, Mail, Phone } from 'lucide-react';
+import { X, MapPin, Clock, Star, Share2, ChevronRight, Printer, Download, Mail, Phone, ExternalLink } from 'lucide-react';
 import { propertyService, LoanProduct, FinanceAssumptions } from '../../services/propertyService';
 import html2canvas from 'html2canvas';
 import jsPDF from 'jspdf';
@@ -330,6 +330,36 @@ export const PropertyDetailsModal: React.FC<PropertyDetailsModalProps> = ({
   }));
   const contentRef = useRef<HTMLDivElement>(null);
 
+  // Resolve Zillow link with zpid via backend; memoize fallback slug immediately
+  const fallbackZillowUrl = useMemo(() => {
+    const parts = [property.address, property.city, property.state].filter(Boolean).join(', ');
+    const slug = parts
+      .replace(/#/g, '')
+      .replace(/,/g, '')
+      .replace(/\s+/g, '-')
+      .replace(/[^a-zA-Z0-9-]/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^-|-$/g, '');
+    return `https://www.zillow.com/homes/${slug}_rb/`;
+  }, [property.address, property.city, property.state]);
+
+  const [zillowUrl, setZillowUrl] = useState<string>(fallbackZillowUrl);
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const addrParts = property.address.split(',');
+        const street = addrParts[0] || property.address;
+        const zipGuess = (addrParts[addrParts.length - 1] || '').match(/\b\d{5}(?:-\d{4})?\b/)?.[0];
+        const result = await propertyService.getZillowLink({ address: street, city: property.city, state: property.state, zip: zipGuess || undefined, lat: property.lat, lng: property.lng });
+        if (mounted && result?.url) setZillowUrl(result.url);
+      } catch {
+        if (mounted) setZillowUrl(fallbackZillowUrl);
+      }
+    })();
+    return () => { mounted = false; };
+  }, [property.address, property.city, property.state, fallbackZillowUrl]);
+
   const handleShare = async () => {
     const title = `${property.address}, ${property.city}, ${property.state}`;
     try {
@@ -582,6 +612,16 @@ export const PropertyDetailsModal: React.FC<PropertyDetailsModalProps> = ({
             <button className="p-2 rounded-full bg-gray-100 text-gray-500 hover:bg-gray-200" onClick={handleShare}>
               <Share2 size={20} />
             </button>
+            <a
+              href={zillowUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="p-2 rounded-full bg-gray-100 text-gray-500 hover:bg-gray-200"
+              title="Open on Zillow"
+              aria-label="Open on Zillow"
+            >
+              <ExternalLink size={20} />
+            </a>
             <button className="p-2 rounded-full bg-gray-100 text-gray-500 hover:bg-gray-200" onClick={onClose}>
               <X size={20} />
             </button>

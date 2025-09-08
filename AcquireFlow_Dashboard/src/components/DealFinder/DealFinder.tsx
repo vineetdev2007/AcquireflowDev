@@ -21,6 +21,8 @@ interface PropertyResult extends PropertyData {
   motivationFactors: string[];
   daysOnMarket: number;
   dealScore: number;
+  zpid?: string | number | null;
+  zillowUrl?: string | null;
 }
 
 export const DealFinder: React.FC = () => {
@@ -523,13 +525,13 @@ export const DealFinder: React.FC = () => {
                     </button>
                   </div>
                 )}
-                {!isLoading && (
+                {/* {!isLoading && (
                   <div className="flex items-center gap-2 ml-3">
                     <button onClick={() => setPage(Math.max(1, page - 1))} className="px-3 py-1.5 text-sm bg-white border border-gray-200 rounded-lg hover:bg-gray-50">Prev</button>
                     <span className="text-sm text-gray-600">Page {page}</span>
                     <button onClick={() => setPage(page + 1)} className="px-3 py-1.5 text-sm bg-white border border-gray-200 rounded-lg hover:bg-gray-50">Next</button>
                   </div>
-                )}
+                )} */}
               </div>
             </div>
             
