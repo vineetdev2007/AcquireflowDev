@@ -616,11 +616,12 @@ export const PropertyDetailsModal: React.FC<PropertyDetailsModalProps> = ({
               href={zillowUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="p-2 rounded-full bg-gray-100 text-gray-500 hover:bg-gray-200"
+              className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-black text-white hover:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-black transition-colors"
               title="Open on Zillow"
               aria-label="Open on Zillow"
             >
-              <ExternalLink size={20} />
+              <span className="text-sm font-medium">Zillow</span>
+              <ExternalLink size={16} />
             </a>
             <button className="p-2 rounded-full bg-gray-100 text-gray-500 hover:bg-gray-200" onClick={onClose}>
               <X size={20} />
