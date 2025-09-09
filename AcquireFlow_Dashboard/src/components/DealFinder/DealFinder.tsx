@@ -166,8 +166,10 @@ export const DealFinder: React.FC = () => {
     if (apiData.vacant) dealScore += 10;
     dealScore = Math.min(dealScore, 100);
     
-    // Generate property image
-    const image = `https://source.unsplash.com/random/800x600/?house,${apiData.id}`;
+    // Use MLS/media image when available; fallback to placeholder
+    const image = (apiData as any).imageUrl && typeof (apiData as any).imageUrl === 'string' && (apiData as any).imageUrl.length > 0
+      ? (apiData as any).imageUrl
+      : `https://source.unsplash.com/random/800x600/?house,${apiData.id}`;
 
     return {
       ...apiData,
@@ -559,7 +561,7 @@ export const DealFinder: React.FC = () => {
                             selectedProperties.includes(property.id) 
                               ? 'border-primary ring-2 ring-primary ring-opacity-30' 
                               : 'border-gray-200'
-                          } shadow-sm overflow-hidden hover:shadow-md transition-shadow`}
+                          } shadow-sm overflow-hidden hover:shadow-md transition-shadow flex flex-col`}
                         >
                           <div className="h-48 bg-gray-200 relative">
                             <img src={property.image} alt={property.address.address} className="w-full h-full object-cover" />
@@ -605,12 +607,12 @@ export const DealFinder: React.FC = () => {
                               </div>
                             )}
                           </div>
-                          <div className="p-4">
-                            <div className="flex justify-between items-start">
-                              <h3 className="font-medium text-dark">
+                          <div className="p-4 flex-1 flex flex-col">
+                            <div className="flex items-start justify-between gap-3">
+                              <h3 className="font-medium text-dark line-clamp-2 leading-snug">
                                 {property.address.address}
                               </h3>
-                              <p className="text-primary font-bold">
+                              <p className="text-primary font-bold whitespace-nowrap">
                                 {formatCurrency(property.estimatedValue)}
                               </p>
                             </div>
@@ -653,9 +655,9 @@ export const DealFinder: React.FC = () => {
                                 </div>
                               </div>
                             </div>
-                            <div className="mt-4">
-                              <button 
-                                className="w-full bg-primary text-white py-2 rounded-lg font-medium hover:bg-primary-dark transition-colors" 
+                            <div className="mt-4 pt-1 mt-auto">
+                              <button
+                                className="w-full bg-primary text-white py-2 rounded-lg font-medium hover:bg-primary-dark transition-colors"
                                 onClick={() => handleViewDetails(property)}
                               >
                                 View Details

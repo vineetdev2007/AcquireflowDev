@@ -120,6 +120,8 @@ export interface PropertyData {
   vacant: boolean;
   yearBuilt: number | null;
   yearsOwned: number;
+  // Optional media support from MLSSearch/public block
+  imageUrl?: string;
 }
 
 export interface PropertySearchResponse {
@@ -253,6 +255,8 @@ class PropertyService {
   private apiKey: string;
   // Deduplicate identical in-flight requests and apply retry/backoff on 429
   private inflightRequests: Map<string, Promise<any>> = new Map();
+  // Cache normalization to avoid repeated heavy transforms in-session
+  private mlsNormalizationCache: WeakMap<any, PropertyData> = new WeakMap();
 
   constructor() {
     // Use your backend API instead of direct external API
@@ -316,94 +320,192 @@ class PropertyService {
     return promise;
   }
 
+  // --- MLS helpers ---
+  private extractMlsArray(payload: any): any[] {
+    if (!payload) return [];
+    if (Array.isArray(payload)) return payload;
+    if (Array.isArray(payload?.data)) return payload.data;
+    if (Array.isArray(payload?.listings)) return payload.listings;
+    if (Array.isArray(payload?.results)) return payload.results;
+    if (payload?.listing || payload?.public) return [payload];
+    if (Array.isArray(payload?.data?.listings)) return payload.data.listings;
+    return [];
+  }
+
+  private num(v: any, d = 0): number {
+    const n = typeof v === 'string' ? parseFloat(v) : typeof v === 'number' ? v : NaN;
+    return Number.isFinite(n) ? n : d;
+  }
+
+  private bool(v: any, d = false): boolean { return v === true || v === 'true' ? true : v === false || v === 'false' ? false : d; }
+
+  private mapMlsItemToPropertyData(item: any): PropertyData {
+    if (this.mlsNormalizationCache.has(item)) {
+      return this.mlsNormalizationCache.get(item)!;
+    }
+    const listing = item?.listing || item?.Listing || {};
+    const pub = item?.public || item?.Public || {};
+    const prop = listing?.property || {};
+    const lead = listing?.leadTypes || pub?.leadTypes || {};
+    const addr = pub?.address || listing?.address || {};
+    const county = addr?.county || addr?.countyOrParish || listing?.address?.countyOrParish || '';
+
+    const lat = this.num(pub?.latitude ?? prop?.latitude);
+    const lng = this.num(pub?.longitude ?? prop?.longitude);
+
+    const primaryImage = listing?.media?.primaryListingImageUrl || pub?.imageUrl || '';
+
+    const out: PropertyData = {
+      absenteeOwner: this.bool(lead?.absenteeOwner),
+      address: {
+        address: addr?.label || addr?.address || [addr?.street, addr?.city, addr?.state, addr?.zip].filter(Boolean).join(', '),
+        city: String(addr?.city || listing?.address?.city || ''),
+        county: String(county || ''),
+        fips: String(pub?.fips || ''),
+        state: String(addr?.state || addr?.stateOrProvince || ''),
+        street: String(addr?.street || addr?.unparsedAddress || ''),
+        zip: String(addr?.zip || addr?.zipCode || ''),
+      },
+      adjustableRate: false,
+      airConditioningAvailable: null,
+      apn: String(pub?.apn || ''),
+      assessedImprovementValue: this.num(pub?.assessedImprovementValue),
+      assessedLandValue: this.num(pub?.assessedLandValue),
+      assessedValue: this.num(pub?.assessedValue),
+      assumable: false,
+      auction: this.bool(pub?.auction),
+      auctionDate: pub?.auctionDate || null,
+      basement: this.bool(pub?.basement),
+      bathrooms: this.num(prop?.bathroomsTotal, 0),
+      bedrooms: this.num(prop?.bedroomsTotal, 0),
+      cashBuyer: this.bool(lead?.cashBuyer),
+      companyName: String(pub?.companyName || ''),
+      corporateOwned: this.bool(lead?.corporateOwned),
+      death: this.bool(lead?.death),
+      deck: this.bool(lead?.deck),
+      deckArea: this.num(pub?.deckArea),
+      documentType: String(pub?.documentType || ''),
+      documentTypeCode: String(pub?.documentTypeCode || ''),
+      equity: this.bool(pub?.equity),
+      equityPercent: this.num(pub?.equityPercent),
+      estimatedEquity: this.num(pub?.estimatedEquity),
+      estimatedValue: this.num(pub?.estimatedValue),
+      floodZone: this.bool(lead?.floodZone),
+      floodZoneDescription: String(pub?.floodZoneDescription || ''),
+      floodZoneType: String(pub?.floodZoneType || ''),
+      foreclosure: this.bool(lead?.foreclosure),
+      forSale: this.bool(listing?.isListed ?? lead?.mlsStatus === 'Active'),
+      freeClear: this.bool(lead?.freeClear),
+      garage: this.bool(lead?.garage),
+      highEquity: this.bool(lead?.highEquity),
+      hoa: null,
+      id: String(item?.id || pub?.propertyId || listing?.listingId || ''),
+      inherited: this.bool(lead?.inherited),
+      inStateAbsenteeOwner: this.bool(lead?.inStateAbsenteeOwner),
+      investorBuyer: this.bool(lead?.investorBuyer),
+      judgment: this.bool(lead?.judgment),
+      landUse: String(pub?.landUse || ''),
+      lastMortgage1Amount: null,
+      lastSaleAmount: String(pub?.lastSaleAmount ?? '0'),
+      lastSaleArmsLength: true,
+      lastSaleDate: String(pub?.lastSaleDate || listing?.leadTypes?.mlsListingDate || '1970-01-01'),
+      lastUpdateDate: String(pub?.lastUpdateDate || listing?.modificationTimestamp || new Date().toISOString()),
+      latitude: Number.isFinite(lat) ? lat : 0,
+      lenderName: String(pub?.lenderName || ''),
+      listingAmount: this.num(listing?.leadTypes?.mlsListingPrice ?? listing?.listPriceLow, 0) || null,
+      longitude: Number.isFinite(lng) ? lng : 0,
+      lotSquareFeet: this.num(pub?.lotSquareFeet || listing?.property?.lotSizeSquareFeet),
+      mailAddress: {
+        address: pub?.mailAddress?.label || [pub?.mailAddress?.street, pub?.mailAddress?.city, pub?.mailAddress?.state, pub?.mailAddress?.zip].filter(Boolean).join(', '),
+        city: String(pub?.mailAddress?.city || ''),
+        county: String(pub?.mailAddress?.county || ''),
+        state: String(pub?.mailAddress?.state || ''),
+        street: String(pub?.mailAddress?.street || ''),
+        zip: String(pub?.mailAddress?.zip || ''),
+      },
+      medianIncome: String(pub?.medianIncome || ''),
+      MFH2to4: this.bool(lead?.MFH2to4),
+      MFH5plus: this.bool(lead?.MFH5plus),
+      mlsActive: this.bool(listing?.leadTypes?.mlsStatus ? String(listing.leadTypes.mlsStatus).toLowerCase() === 'active' : listing?.isListed),
+      mlsCancelled: this.bool(listing?.leadTypes?.mlsCancelled),
+      mlsFailed: this.bool(listing?.leadTypes?.mlsFailed),
+      mlsHasPhotos: this.bool(listing?.leadTypes?.mlsHasPhotos ?? listing?.hasPhotos),
+      mlsLastSaleDate: String(listing?.leadTypes?.mlsLastStatusDate || ''),
+      mlsListingPrice: this.num(listing?.leadTypes?.mlsListingPrice ?? listing?.listPriceLow, 0) || null,
+      mlsPending: this.bool(listing?.leadTypes?.mlsPending),
+      mlsSold: this.bool(listing?.leadTypes?.mlsSold),
+      negativeEquity: this.bool(pub?.negativeEquity),
+      openMortgageBalance: this.num(pub?.openMortgageBalance),
+      outOfStateAbsenteeOwner: this.bool(lead?.outOfStateAbsenteeOwner),
+      owner1LastName: String(pub?.owner1LastName || ''),
+      ownerOccupied: this.bool(lead?.ownerOccupied),
+      patio: this.bool(lead?.patio),
+      patioArea: this.num(pub?.patioArea),
+      pool: this.bool(lead?.pool),
+      poolArea: this.num(pub?.poolArea),
+      portfolioPurchasedLast12Months: this.num(pub?.portfolioPurchasedLast12Months),
+      portfolioPurchasedLast6Months: this.num(pub?.portfolioPurchasedLast6Months),
+      preForeclosure: this.bool(lead?.preForeclosure),
+      pricePerSquareFoot: this.num(listing?.pricePerSqFt),
+      priorSaleAmount: this.num(pub?.priorSaleAmount),
+      privateLender: this.bool(pub?.privateLender),
+      propertyId: String(pub?.propertyId || item?.id || ''),
+      propertyType: String(pub?.propertyType || listing?.property?.propertyType || ''),
+      propertyUse: String(pub?.propertyUse || (Array.isArray(listing?.property?.propertySubType) ? listing.property.propertySubType.join(', ') : listing?.property?.propertySubType) || ''),
+      propertyUseCode: this.num(pub?.propertyUseCode),
+      recordingDate: String(pub?.recordingDate || ''),
+      rentAmount: null,
+      reo: this.bool(pub?.reo),
+      roofConstruction: null,
+      roofMaterial: null,
+      roomsCount: this.num(pub?.roomsCount),
+      squareFeet: this.num(listing?.property?.livingArea ?? pub?.squareFeet, 0),
+      stories: typeof prop?.stories === 'number' ? prop.stories : null,
+      taxLien: this.bool(lead?.taxLien),
+      totalPortfolioEquity: String(pub?.totalPortfolioEquity || ''),
+      totalPortfolioMortgageBalance: String(pub?.totalPortfolioMortgageBalance || ''),
+      totalPortfolioValue: String(pub?.totalPortfolioValue || ''),
+      totalPropertiesOwned: String(pub?.totalPropertiesOwned || ''),
+      unitsCount: this.num(pub?.unitsCount),
+      vacant: this.bool(lead?.vacant),
+      yearBuilt: pub?.yearBuilt ? this.num(pub?.yearBuilt) : (typeof prop?.yearBuilt === 'string' ? this.num(prop?.yearBuilt) : (typeof prop?.yearBuilt === 'number' ? prop.yearBuilt : null)),
+      yearsOwned: this.num(pub?.yearsOwned),
+      imageUrl: String(primaryImage || '')
+    };
+
+    this.mlsNormalizationCache.set(item, out);
+    return out;
+  }
+
+  private normalizeMlsResponse(raw: any, input: Record<string, any>): PropertySearchResponse {
+    const arr = this.extractMlsArray(raw);
+    const mapped = arr.map((it) => this.mapMlsItemToPropertyData(it));
+    return { live: true, input, data: mapped };
+  }
+
   /**
    * Search for properties based on filters
    */
   async searchProperties(filters: PropertySearchFilters & { page?: number; size?: number }): Promise<PropertySearchResponse> {
-    const searchParams = new URLSearchParams();
-    if ((filters as any).page) {
-      searchParams.append('page', String((filters as any).page));
+    // Convert locations -> city/state (first location only for MLS search)
+    const firstLocation = Array.isArray(filters.locations) && filters.locations.length ? String(filters.locations[0]) : undefined;
+    let city: string | undefined; let state: string | undefined;
+    if (firstLocation) {
+      if (firstLocation.includes(',')) {
+        const parts = firstLocation.split(',');
+        city = parts.slice(0, parts.length - 1).join(',').trim();
+        state = parts[parts.length - 1].trim().toUpperCase();
+      } else if (/^[A-Za-z]{2}$/.test(firstLocation)) {
+        state = firstLocation.toUpperCase();
+      }
     }
-    if ((filters as any).size) {
-      searchParams.append('size', String((filters as any).size));
-    }
-    
-    // Add filters to search parameters
-    if (filters.locations && filters.locations.length > 0) {
-      searchParams.append('locations', filters.locations.join(','));
-    }
-    if (filters.minPrice) {
-      searchParams.append('minPrice', filters.minPrice.toString());
-    }
-    if (filters.maxPrice) {
-      searchParams.append('maxPrice', filters.maxPrice.toString());
-    }
-    if (filters.propertyTypes && filters.propertyTypes.length > 0) {
-      searchParams.append('propertyTypes', filters.propertyTypes.join(','));
-    }
-    if (filters.minBeds) {
-      searchParams.append('minBeds', filters.minBeds.toString());
-    }
-    if (filters.maxBeds) {
-      searchParams.append('maxBeds', filters.maxBeds.toString());
-    }
-    if (filters.minBaths) {
-      searchParams.append('minBaths', filters.minBaths.toString());
-    }
-    if (filters.maxBaths) {
-      searchParams.append('maxBaths', filters.maxBaths.toString());
-    }
-    if (filters.minSqft) {
-      searchParams.append('minSqft', filters.minSqft.toString());
-    }
-    if (filters.maxSqft) {
-      searchParams.append('maxSqft', filters.maxSqft.toString());
-    }
-    if (filters.absenteeOwner !== undefined) {
-      searchParams.append('absenteeOwner', filters.absenteeOwner.toString());
-    }
-    if (filters.highEquity !== undefined) {
-      searchParams.append('highEquity', filters.highEquity.toString());
-    }
-    if (filters.outOfStateOwner !== undefined) {
-      searchParams.append('outOfStateOwner', filters.outOfStateOwner.toString());
-    }
-    if (filters.corporateOwned !== undefined) {
-      searchParams.append('corporateOwned', filters.corporateOwned.toString());
-    }
-    if (filters.investorBuyer !== undefined) {
-      searchParams.append('investorBuyer', filters.investorBuyer.toString());
-    }
-    if (filters.preForeclosure !== undefined) {
-      searchParams.append('preForeclosure', filters.preForeclosure.toString());
-    }
-    if (filters.taxLien !== undefined) {
-      searchParams.append('taxLien', filters.taxLien.toString());
-    }
-    if (filters.vacant !== undefined) {
-      searchParams.append('vacant', filters.vacant.toString());
-    }
-    if (filters.cashBuyer !== undefined) {
-      searchParams.append('cashBuyer', filters.cashBuyer.toString());
-    }
-    if (filters.equityPercent) {
-      searchParams.append('equityPercent', filters.equityPercent.toString());
-    }
-    if (filters.yearsOwned) {
-      searchParams.append('yearsOwned', filters.yearsOwned.toString());
-    }
-    if (filters.lastSaleDate) {
-      searchParams.append('lastSaleDate', filters.lastSaleDate);
-    }
-    if (filters.medianIncome) {
-      searchParams.append('medianIncome', filters.medianIncome.toString());
-    }
-
-    const queryString = searchParams.toString();
-    const endpoint = `/properties/search${queryString ? `?${queryString}` : ''}`;
-    
-    const result = await this.request<{success: boolean, data: PropertySearchResponse}>(endpoint);
-    return result.data;
+    const page = (filters as any).page || 1;
+    const size = (filters as any).size || 50;
+    const qs = new URLSearchParams({ page: String(page), size: String(size) });
+    if (city) qs.append('city', city);
+    if (state) qs.append('state', state);
+    const result = await this.request<{ success: boolean; data: any; meta?: any }>(`/properties/mls-search?${qs.toString()}`);
+    return this.normalizeMlsResponse(result.data, { page, size, city, state });
   }
 
   /**
@@ -412,7 +514,7 @@ class PropertyService {
   async searchPropertiesPost(
     filters: PropertySearchFilters & { page?: number; size?: number; city?: string; state?: string; mls_active?: boolean; property_type?: string }
   ): Promise<PropertySearchResponse> {
-    // Derive city/state from locations[] if not explicitly provided
+    // Derive city/state from locations[] or explicit fields
     let city = (filters as any).city as string | undefined;
     let state = (filters as any).state as string | undefined;
     const firstLocation = Array.isArray(filters.locations) && filters.locations.length ? String(filters.locations[0]) : undefined;
@@ -426,48 +528,35 @@ class PropertyService {
       }
     }
 
-    // Map our propertyTypes to upstream property_type when a single clear type is chosen
-    let propertyType = (filters as any).property_type as string | undefined;
-    if (!propertyType && Array.isArray(filters.propertyTypes) && filters.propertyTypes.length === 1) {
-      const t = filters.propertyTypes[0];
-      if (t === 'singleFamily') propertyType = 'SFR';
-      else if (t === 'multiFamily') propertyType = 'MFR';
-      else if (t === 'land') propertyType = 'LAND';
-      else if (t === 'commercial') propertyType = 'OTHER';
-    }
-
     const body: any = {
       page: (filters as any).page || 1,
       size: (filters as any).size || 50,
-      mls_active: (filters as any).mls_active ?? true,
       city,
-      state,
-      property_type: propertyType
+      state
     };
-    // Remove undefined
     Object.keys(body).forEach(k => body[k] === undefined && delete body[k]);
-    const result = await this.request<{ success: boolean; data: PropertySearchResponse }>(
-      `/properties/search`,
+
+    const result = await this.request<{ success: boolean; data: any; meta?: any }>(
+      `/properties/mls-search`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
       }
     );
-    return result.data;
+    return this.normalizeMlsResponse(result.data, body);
   }
 
   /**
    * Get featured properties (default search)
    */
    async getFeaturedProperties(page: number = 1, size: number = 50): Promise<PropertySearchResponse> {
-    console.log('🔍 Fetching featured properties from backend:', `${this.baseUrl}/properties/featured`);
-    
+    console.log('🔍 Fetching featured MLS listings from backend:', `${this.baseUrl}/properties/mls-search`);
     try {
       const qs = new URLSearchParams({ page: String(page), size: String(size) }).toString();
-      const result = await this.request<{success: boolean, data: PropertySearchResponse}>(`/properties/featured?${qs}`);
-      console.log('✅ Backend API Response received:', result);
-      return result.data;
+      const result = await this.request<{ success: boolean; data: any }>(`/properties/mls-search?${qs}`);
+      const normalized = this.normalizeMlsResponse(result.data, { page, size });
+      return normalized;
     } catch (error) {
       console.log('❌ Backend API Error:', error);
       throw error;
@@ -486,11 +575,12 @@ class PropertyService {
    * Get properties by location
    */
   async getPropertiesByLocation(location: string): Promise<PropertySearchResponse> {
-    const searchParams = new URLSearchParams();
-    searchParams.append('locations', location);
-    
-    const result = await this.request<{success: boolean, data: PropertySearchResponse}>(`/properties/search?${searchParams.toString()}`);
-    return result.data;
+    const [city, state] = location.split(',').map(s => s.trim());
+    const qs = new URLSearchParams();
+    if (city) qs.append('city', city);
+    if (state) qs.append('state', state);
+    const result = await this.request<{ success: boolean; data: any }>(`/properties/mls-search?${qs.toString()}`);
+    return this.normalizeMlsResponse(result.data, { city, state });
   }
 
   /**

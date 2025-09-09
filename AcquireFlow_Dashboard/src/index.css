@@ -8,6 +8,13 @@
   transition-property: background-color, border-color, color, fill, stroke;
   transition-duration: 200ms;
 }
+/* Simple 2-line clamp utility */
+.line-clamp-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
 /* Font family reference - note that the actual font needs to be loaded separately */
 :root {
   font-family: 'LT Superior', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;

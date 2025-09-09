@@ -93,7 +93,7 @@ export const AuthProvider: React.FC<{
           
                       // Validate the token by making a simple API call
             try {
-              const response = await fetch(`https://acquireflow-backend.onrender.com/profile/complete`, {
+              const response = await fetch(`https://acquireflow-ai-dashboard-v7.onrender.com/profile/complete`, {
               headers: {
                 'Authorization': `Bearer ${storedAccessToken}`,
                 'Content-Type': 'application/json'

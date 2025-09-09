@@ -416,6 +416,95 @@ router.get('/featured', async (_req: Request, res: Response) => {
 });
 
 /**
+ * GET /api/v1/properties/mls-search
+ * Proxies to https://api.realestateapi.com/v2/MLSSearch
+ * Accepts common filters via query: city, state, zip, mlsType, page, size
+ */
+router.get('/mls-search', async (req: Request, res: Response) => {
+  try {
+    const apiKey = process.env['REAL_ESTATE_API_KEY'];
+    if (!apiKey) return res.status(500).json({ success: false, message: 'Real Estate API key not configured' });
+
+    const q = req.query as any;
+    const page = Math.max(1, parseInt(String(q.page || '1'), 10));
+    const size = Math.max(1, Math.min(200, parseInt(String(q.size || '50'), 10)));
+    const resultIndex = (page - 1) * size;
+
+    const body: any = { size, resultIndex };
+    if (q.city) body.city = String(q.city);
+    if (q.state) body.state = String(q.state).toUpperCase();
+    if (q.zip) body.zip = String(q.zip);
+    if (q.mlsType) body.mlsType = Array.isArray(q.mlsType) ? q.mlsType : String(q.mlsType).split(',').map((s: string) => s.trim()).filter(Boolean);
+    if (q.mlsBoardCode) body.mlsBoardCode = String(q.mlsBoardCode);
+    if (q.isListed !== undefined) body.isListed = String(q.isListed).toLowerCase() === 'true';
+
+    const cacheKey = `mls-search:${JSON.stringify(body)}`;
+    const cached = propertyCache.get(cacheKey);
+    if (cached && nowMs() - cached.ts < PROPERTY_CACHE_TTL_MS) {
+      return res.json({ success: true, data: cached.data, meta: { page, size, resultIndex, cached: true } });
+    }
+
+    const response = await axios.post('https://api.realestateapi.com/v2/MLSSearch', body, {
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'User-Agent': 'AcquireFlow/1.0'
+      },
+      timeout: 30000
+    });
+
+    propertyCache.set(cacheKey, { data: response.data, ts: nowMs() });
+    return res.json({ success: true, data: response.data, meta: { page, size, resultIndex } });
+  } catch (error: any) {
+    if (error.response) {
+      return res.status(error.response.status).json({ success: false, message: error.response.data?.message || 'External API error', details: error.response.data });
+    }
+    return res.status(500).json({ success: false, message: error?.message || 'MLS search failed' });
+  }
+});
+
+/**
+ * POST /api/v1/properties/mls-search
+ * Proxies to https://api.realestateapi.com/v2/MLSSearch with JSON body
+ */
+router.post('/mls-search', async (req: Request, res: Response) => {
+  try {
+    const apiKey = process.env['REAL_ESTATE_API_KEY'];
+    if (!apiKey) return res.status(500).json({ success: false, message: 'Real Estate API key not configured' });
+
+    const b = req.body || {};
+    const page = Math.max(1, parseInt(String(b.page || '1'), 10));
+    const size = Math.max(1, Math.min(200, parseInt(String(b.size || '50'), 10)));
+    const resultIndex = (page - 1) * size;
+
+    const body: any = { size, resultIndex };
+    if (b.city) body.city = String(b.city);
+    if (b.state) body.state = String(b.state).toUpperCase();
+    if (b.zip) body.zip = String(b.zip);
+    if (Array.isArray(b.mlsType)) body.mlsType = b.mlsType;
+    else if (b.mlsType) body.mlsType = String(b.mlsType).split(',').map((s: string) => s.trim()).filter(Boolean);
+    if (b.mlsBoardCode) body.mlsBoardCode = String(b.mlsBoardCode);
+    if (b.isListed !== undefined) body.isListed = !!b.isListed;
+
+    const response = await axios.post('https://api.realestateapi.com/v2/MLSSearch', body, {
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'User-Agent': 'AcquireFlow/1.0'
+      },
+      timeout: 30000
+    });
+
+    return res.json({ success: true, data: response.data, meta: { page, size, resultIndex } });
+  } catch (error: any) {
+    if (error.response) {
+      return res.status(error.response.status).json({ success: false, message: error.response.data?.message || 'External API error', details: error.response.data });
+    }
+    return res.status(500).json({ success: false, message: error?.message || 'MLS search failed' });
+  }
+});
+
+/**
  * GET /api/v1/properties/market-kpis
  * Query: city=Orlando&state=FL
  */
